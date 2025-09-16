@@ -2,7 +2,7 @@ package gostc
 
 import (
 	"context"
-	"crypto/md5"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -10,6 +10,7 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -22,15 +23,20 @@ import (
 )
 
 type Server struct {
-	config       *Config
-	cache        Cache
-	compression  *CompressionManager
-	invalidator  Invalidator
-	handler      http.Handler
-	httpServer   *http.Server
-	metrics      *Metrics
-	mu           sync.RWMutex
-	shutdown     chan struct{}
+	config         *Config
+	cache          Cache
+	compression    *CompressionManager
+	invalidator    Invalidator
+	versionManager *AssetVersionManager
+	htmlProcessor  *HTMLProcessor
+	handler        http.Handler
+	httpServer     *http.Server
+	metrics        *Metrics
+	csrfProtection *CSRFProtection
+	rateLimiter    *IPRateLimiter
+	errorHandler  *ErrorHandler
+	mu             sync.RWMutex
+	shutdown       chan struct{}
 }
 
 type Metrics struct {
@@ -54,16 +60,31 @@ func New(opts ...Option) (*Server, error) {
 	}
 
 	compression := NewCompressionManager(config)
+	versionManager := NewAssetVersionManager(config)
+	htmlProcessor := NewHTMLProcessor(versionManager)
 
 	s := &Server{
-		config:      config,
-		cache:       cache,
-		compression: compression,
-		shutdown:    make(chan struct{}),
+		config:         config,
+		cache:          cache,
+		compression:    compression,
+		versionManager: versionManager,
+		htmlProcessor:  htmlProcessor,
+		csrfProtection: NewCSRFProtection(time.Hour),
+		rateLimiter:    NewIPRateLimiter(config.RateLimitPerIP, config.RateLimitPerIP*10, 5*time.Minute),
+		errorHandler:  NewErrorHandler(config.Debug),
+		shutdown:       make(chan struct{}),
 	}
 
 	if config.EnableWatcher {
-		watcher, err := NewFileWatcher(config.Root, cache, compression)
+		var watcher *FileWatcher
+		var err error
+
+		if config.EnableVersioning {
+			watcher, err = NewVersionedFileWatcher(config.Root, cache, compression, versionManager)
+		} else {
+			watcher, err = NewFileWatcher(config.Root, cache, compression)
+		}
+
 		if err != nil {
 			return nil, err
 		}
@@ -74,6 +95,13 @@ func New(opts ...Option) (*Server, error) {
 
 	if config.EnableMetrics {
 		s.setupMetrics()
+	}
+
+	// Initialize asset versioning if enabled
+	if config.EnableVersioning {
+		if err := s.versionManager.ScanDirectory(config.Root); err != nil {
+			return nil, fmt.Errorf("failed to scan directory for versioning: %w", err)
+		}
 	}
 
 	s.setupHandler()
@@ -186,16 +214,50 @@ func (s *Server) serveFile(w http.ResponseWriter, r *http.Request) {
 		}(time.Now())
 	}
 
-	if r.Method != "GET" && r.Method != "HEAD" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	if r.Method != "GET" && r.Method != "HEAD" && r.Method != "OPTIONS" {
+		err := NewServerError(ErrorTypeValidation, "server.serveFile", nil).
+			WithMessage("Method not allowed").
+			WithStatusCode(http.StatusMethodNotAllowed)
+		s.errorHandler.HandleError(w, r, err)
+		return
+	}
+
+	// Apply request size limit for all methods
+	if r.ContentLength > 0 && r.ContentLength > s.config.MaxBodySize {
+		err := NewServerError(ErrorTypeValidation, "server.serveFile", ErrRequestTooLarge).
+			WithStatusCode(http.StatusRequestEntityTooLarge)
+		s.errorHandler.HandleError(w, r, err)
 		return
 	}
 
 	urlPath := r.URL.Path
-	fullPath := filepath.Join(s.config.Root, filepath.Clean(urlPath))
 
-	if !strings.HasPrefix(fullPath, s.config.Root) {
-		http.Error(w, "Invalid path", http.StatusBadRequest)
+	// Validate and sanitize the URL path
+	if !isValidPath(urlPath) {
+		err := NewServerError(ErrorTypeSecurity, "server.serveFile", ErrInvalidPath).
+			WithPath(urlPath)
+		s.errorHandler.HandleError(w, r, err)
+		return
+	}
+
+	originalPath := urlPath
+	isVersioned := false
+
+	// Check if this is a versioned asset path and resolve to original
+	if s.config.EnableVersioning && s.versionManager.IsVersionedPath(urlPath) {
+		if resolvedPath, exists := s.versionManager.GetOriginalPath(urlPath); exists {
+			originalPath = resolvedPath
+			isVersioned = true
+		}
+	}
+
+	// Clean and secure the path
+	cleanedPath := path.Clean("/" + strings.TrimPrefix(originalPath, "/"))
+	fullPath, err := securePath(s.config.Root, cleanedPath)
+	if err != nil {
+		serverErr := NewServerError(ErrorTypeSecurity, "server.securePath", ErrPathTraversal).
+			WithPath(originalPath)
+		s.errorHandler.HandleError(w, r, serverErr)
 		return
 	}
 
@@ -205,6 +267,7 @@ func (s *Server) serveFile(w http.ResponseWriter, r *http.Request) {
 	cacheKey := CacheKey{
 		Path:        urlPath,
 		Compression: compressionType,
+		IsVersioned: isVersioned,
 	}
 
 	if entry, ok := s.cache.Get(cacheKey); ok {
@@ -212,7 +275,7 @@ func (s *Server) serveFile(w http.ResponseWriter, r *http.Request) {
 			s.metrics.cacheHits.Inc()
 		}
 
-		s.serveFromCache(w, r, entry, compressionType)
+		s.serveFromCache(w, r, entry, compressionType, isVersioned)
 		return
 	}
 
@@ -222,11 +285,18 @@ func (s *Server) serveFile(w http.ResponseWriter, r *http.Request) {
 
 	info, err := os.Stat(fullPath)
 	if err != nil {
+		var serverErr *ServerError
 		if os.IsNotExist(err) {
-			http.Error(w, "File not found", http.StatusNotFound)
+			serverErr = NewServerError(ErrorTypeNotFound, "server.stat", err).
+				WithPath(originalPath)
+		} else if os.IsPermission(err) {
+			serverErr = NewServerError(ErrorTypePermission, "server.stat", err).
+				WithPath(originalPath)
 		} else {
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			serverErr = NewServerError(ErrorTypeServerError, "server.stat", err).
+				WithPath(originalPath)
 		}
+		s.errorHandler.HandleError(w, r, serverErr)
 		return
 	}
 
@@ -235,24 +305,28 @@ func (s *Server) serveFile(w http.ResponseWriter, r *http.Request) {
 		if indexInfo, err := os.Stat(indexPath); err == nil && !indexInfo.IsDir() {
 			fullPath = indexPath
 			info = indexInfo
-			urlPath = filepath.Join(urlPath, s.config.IndexFile)
+			originalPath = filepath.Join(originalPath, s.config.IndexFile)
+			urlPath = originalPath
 		} else if s.config.AllowBrowsing {
 			s.serveDirectory(w, r, fullPath)
 			return
 		} else {
-			http.Error(w, "File not found", http.StatusNotFound)
+			err := NewServerError(ErrorTypeNotFound, "server.serveFile", nil).
+				WithPath(originalPath).
+				WithMessage("Directory listing disabled")
+			s.errorHandler.HandleError(w, r, err)
 			return
 		}
 	}
 
-	s.serveFileWithCompression(w, r, fullPath, info, compressor, compressionType)
+	s.serveFileWithCompression(w, r, fullPath, info, compressor, compressionType, isVersioned, originalPath)
 }
 
-func (s *Server) serveFromCache(w http.ResponseWriter, r *http.Request, entry *CacheEntry, compressionType CompressionType) {
+func (s *Server) serveFromCache(w http.ResponseWriter, r *http.Request, entry *CacheEntry, compressionType CompressionType, isVersioned bool) {
 	w.Header().Set("Content-Type", entry.ContentType)
 	w.Header().Set("ETag", entry.ETag)
 	w.Header().Set("Last-Modified", entry.LastModified.UTC().Format(http.TimeFormat))
-	w.Header().Set("Cache-Control", getCacheControl(r.URL.Path, s.config))
+	w.Header().Set("Cache-Control", getCacheControl(r.URL.Path, s.config, isVersioned))
 
 	if compressionType != NoCompression {
 		w.Header().Set("Content-Encoding", getEncodingName(compressionType))
@@ -287,23 +361,52 @@ func (s *Server) serveFromCache(w http.ResponseWriter, r *http.Request, entry *C
 	}
 }
 
-func (s *Server) serveFileWithCompression(w http.ResponseWriter, r *http.Request, fullPath string, info os.FileInfo, compressor Compressor, compressionType CompressionType) {
+func (s *Server) serveFileWithCompression(w http.ResponseWriter, r *http.Request, fullPath string, info os.FileInfo, compressor Compressor, compressionType CompressionType, isVersioned bool, originalPath string) {
 	file, err := os.Open(fullPath)
 	if err != nil {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		var serverErr *ServerError
+		if os.IsPermission(err) {
+			serverErr = NewServerError(ErrorTypePermission, "server.openFile", err).
+				WithPath(fullPath)
+		} else {
+			serverErr = NewServerError(ErrorTypeServerError, "server.openFile", err).
+				WithPath(fullPath)
+		}
+		s.errorHandler.HandleError(w, r, serverErr)
 		return
 	}
-	defer file.Close()
+	defer SafeClose(file)
 
-	data, err := io.ReadAll(file)
+	// Limit the amount of data read to prevent memory exhaustion
+	limitedReader := io.LimitReader(file, s.config.MaxFileSize)
+	data, err := io.ReadAll(limitedReader)
 	if err != nil {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		serverErr := NewServerError(ErrorTypeServerError, "server.readFile", err).
+			WithPath(fullPath)
+		s.errorHandler.HandleError(w, r, serverErr)
 		return
+	}
+
+	// Check if file exceeded size limit
+	if int64(len(data)) == s.config.MaxFileSize {
+		// Try to read one more byte to check if file is larger
+		if _, err := file.Read(make([]byte, 1)); err == nil {
+			serverErr := NewServerError(ErrorTypeValidation, "server.readFile", ErrFileTooLarge).
+				WithPath(fullPath).
+				WithMessage(fmt.Sprintf("File exceeds maximum size of %d bytes", s.config.MaxFileSize))
+			s.errorHandler.HandleError(w, r, serverErr)
+			return
+		}
 	}
 
 	contentType := mime.TypeByExtension(filepath.Ext(fullPath))
 	if contentType == "" {
 		contentType = http.DetectContentType(data[:512])
+	}
+
+	// Register asset for versioning if enabled and not already registered
+	if s.config.EnableVersioning && !isVersioned && s.versionManager.shouldVersionFile(originalPath) {
+		s.versionManager.RegisterAsset(originalPath, data)
 	}
 
 	etag := generateETag(data)
@@ -312,7 +415,7 @@ func (s *Server) serveFileWithCompression(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Last-Modified", lastModified.UTC().Format(http.TimeFormat))
-	w.Header().Set("Cache-Control", getCacheControl(r.URL.Path, s.config))
+	w.Header().Set("Cache-Control", getCacheControl(r.URL.Path, s.config, isVersioned))
 
 	// Check If-None-Match (ETag)
 	if r.Header.Get("If-None-Match") == etag {
@@ -347,12 +450,20 @@ func (s *Server) serveFileWithCompression(w http.ResponseWriter, r *http.Request
 				LastModified: lastModified,
 				Size:         int64(len(responseData)),
 			}
-			s.cache.Set(CacheKey{Path: r.URL.Path, Compression: compressionType}, entry)
+			s.cache.Set(CacheKey{Path: r.URL.Path, Compression: compressionType, IsVersioned: isVersioned}, entry)
 		} else {
 			responseData = data
 		}
 	} else {
 		responseData = data
+
+		// Process HTML files to inject versioned asset references
+		if s.config.EnableVersioning && (contentType == "text/html" || strings.Contains(contentType, "text/html")) {
+			responseData = s.htmlProcessor.ProcessHTML(responseData, originalPath)
+			// Update ETag after HTML processing since content changed
+			etag = generateETag(responseData)
+			w.Header().Set("ETag", etag)
+		}
 
 		entry := &CacheEntry{
 			Data:         responseData,
@@ -361,7 +472,7 @@ func (s *Server) serveFileWithCompression(w http.ResponseWriter, r *http.Request
 			LastModified: lastModified,
 			Size:         int64(len(responseData)),
 		}
-		s.cache.Set(CacheKey{Path: r.URL.Path, Compression: NoCompression}, entry)
+		s.cache.Set(CacheKey{Path: r.URL.Path, Compression: NoCompression, IsVersioned: isVersioned}, entry)
 	}
 
 	if r.Method == "HEAD" {
@@ -458,6 +569,35 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.handler.ServeHTTP(w, r)
 }
 
+// ServeFileHTTP serves files directly without going through the internal mux
+// This is useful when embedding gostc as a handler to avoid mux conflicts
+func (s *Server) ServeFileHTTP(w http.ResponseWriter, r *http.Request) {
+	// Create the file handler with middlewares, but bypass the internal mux
+	fileHandler := http.HandlerFunc(s.serveFile)
+
+	middlewares := []Middleware{
+		RecoveryMiddleware(),
+		LoggingMiddleware(),
+		SecurityHeadersMiddleware(s.config),
+		CORSMiddleware(s.config),
+	}
+
+	if s.config.RateLimitPerIP > 0 {
+		middlewares = append(middlewares, RateLimitMiddleware(s.config.RateLimitPerIP))
+	}
+
+	if s.config.MaxBodySize > 0 {
+		middlewares = append(middlewares, MaxBytesMiddleware(s.config.MaxBodySize))
+	}
+
+	if s.config.ReadTimeout > 0 {
+		middlewares = append(middlewares, TimeoutMiddleware(s.config.ReadTimeout))
+	}
+
+	handler := ChainMiddleware(fileHandler, middlewares...)
+	handler.ServeHTTP(w, r)
+}
+
 func (s *Server) InvalidatePath(path string) {
 	s.invalidator.InvalidatePath(path)
 }
@@ -471,8 +611,76 @@ func (s *Server) CacheStats() CacheStats {
 }
 
 func generateETag(data []byte) string {
-	hash := md5.Sum(data)
-	return hex.EncodeToString(hash[:])
+	hash := sha256.Sum256(data)
+	return `"` + hex.EncodeToString(hash[:16]) + `"`
+}
+
+// isValidPath checks if the path contains any suspicious patterns
+func isValidPath(urlPath string) bool {
+	// Reject paths with null bytes
+	if strings.Contains(urlPath, "\x00") {
+		return false
+	}
+
+	// Reject paths with suspicious patterns
+	suspiciousPatterns := []string{
+		"../",
+		"..\\",
+		"..%2f",
+		"..%2F",
+		"..%5c",
+		"..%5C",
+		"%00",
+		"./.",
+		".%2e",
+		"%252e",
+	}
+
+	lowerPath := strings.ToLower(urlPath)
+	for _, pattern := range suspiciousPatterns {
+		if strings.Contains(lowerPath, pattern) {
+			return false
+		}
+	}
+
+	// Reject overly long paths
+	if len(urlPath) > 2048 {
+		return false
+	}
+
+	return true
+}
+
+// securePath safely joins and validates a root directory with a relative path
+func securePath(root, relPath string) (string, error) {
+	// Clean the relative path
+	relPath = path.Clean(relPath)
+
+	// Ensure the path doesn't escape the root
+	if strings.HasPrefix(relPath, "..") || strings.Contains(relPath, "/..") {
+		return "", fmt.Errorf("path traversal detected")
+	}
+
+	// Join with root and convert to absolute path
+	fullPath := filepath.Join(root, strings.TrimPrefix(relPath, "/"))
+
+	// Get absolute paths for comparison
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+
+	absPath, err := filepath.Abs(fullPath)
+	if err != nil {
+		return "", err
+	}
+
+	// Ensure the resolved path is within the root directory
+	if !strings.HasPrefix(absPath, absRoot) {
+		return "", fmt.Errorf("path escapes root directory")
+	}
+
+	return absPath, nil
 }
 
 func getEncodingName(compressionType CompressionType) string {

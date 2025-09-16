@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,12 +19,13 @@ type Invalidator interface {
 }
 
 type FileWatcher struct {
-	watcher     *fsnotify.Watcher
-	cache       Cache
-	root        string
-	mu          sync.RWMutex
-	stopChan    chan struct{}
-	compression *CompressionManager
+	watcher        *fsnotify.Watcher
+	cache          Cache
+	root           string
+	mu             sync.RWMutex
+	stopChan       chan struct{}
+	compression    *CompressionManager
+	versionManager *AssetVersionManager
 }
 
 func NewFileWatcher(root string, cache Cache, compression *CompressionManager) (*FileWatcher, error) {
@@ -33,11 +35,30 @@ func NewFileWatcher(root string, cache Cache, compression *CompressionManager) (
 	}
 
 	fw := &FileWatcher{
-		watcher:     watcher,
-		cache:       cache,
-		root:        root,
-		stopChan:    make(chan struct{}),
-		compression: compression,
+		watcher:        watcher,
+		cache:          cache,
+		root:           root,
+		stopChan:       make(chan struct{}),
+		compression:    compression,
+		versionManager: nil, // Will be set by server if versioning is enabled
+	}
+
+	return fw, nil
+}
+
+func NewVersionedFileWatcher(root string, cache Cache, compression *CompressionManager, versionManager *AssetVersionManager) (*FileWatcher, error) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, err
+	}
+
+	fw := &FileWatcher{
+		watcher:        watcher,
+		cache:          cache,
+		root:           root,
+		stopChan:       make(chan struct{}),
+		compression:    compression,
+		versionManager: versionManager,
 	}
 
 	return fw, nil
@@ -63,12 +84,47 @@ func (fw *FileWatcher) InvalidatePath(path string) {
 
 	relPath, err := filepath.Rel(fw.root, path)
 	if err != nil {
+		log.Printf("Error calculating relative path for %s: %v", path, err)
 		return
 	}
 
-	fw.cache.Delete(CacheKey{Path: relPath, Compression: NoCompression})
-	fw.cache.Delete(CacheKey{Path: relPath, Compression: Gzip})
-	fw.cache.Delete(CacheKey{Path: relPath, Compression: Brotli})
+	// Normalize path to use forward slashes
+	relPath = filepath.ToSlash(relPath)
+	if !strings.HasPrefix(relPath, "/") {
+		relPath = "/" + relPath
+	}
+
+	// Invalidate all cache entries for this path (both versioned and non-versioned)
+	fw.cache.Delete(CacheKey{Path: relPath, Compression: NoCompression, IsVersioned: false})
+	fw.cache.Delete(CacheKey{Path: relPath, Compression: Gzip, IsVersioned: false})
+	fw.cache.Delete(CacheKey{Path: relPath, Compression: Brotli, IsVersioned: false})
+	fw.cache.Delete(CacheKey{Path: relPath, Compression: NoCompression, IsVersioned: true})
+	fw.cache.Delete(CacheKey{Path: relPath, Compression: Gzip, IsVersioned: true})
+	fw.cache.Delete(CacheKey{Path: relPath, Compression: Brotli, IsVersioned: true})
+
+	// If versioning is enabled, update the asset version with retry
+	if fw.versionManager != nil && fw.versionManager.shouldVersionFile(relPath) {
+		fullPath := filepath.Join(fw.root, strings.TrimPrefix(relPath, "/"))
+
+		// Try to read file with retry logic
+		err := RetryOperation(func() error {
+			content, err := os.ReadFile(fullPath)
+			if err != nil {
+				if os.IsNotExist(err) {
+					// File was deleted, remove from version manager
+					fw.versionManager.RemoveAsset(relPath)
+					return nil
+				}
+				return err
+			}
+			fw.versionManager.RegisterAsset(relPath, content)
+			return nil
+		}, 3)
+
+		if err != nil {
+			log.Printf("Failed to update version for %s after retries: %v", relPath, err)
+		}
+	}
 }
 
 func (fw *FileWatcher) InvalidateAll() {
@@ -91,9 +147,21 @@ func (fw *FileWatcher) watch() {
 				fw.InvalidatePath(event.Name)
 
 				if event.Op&fsnotify.Create == fsnotify.Create {
-					info, err := os.Stat(event.Name)
-					if err == nil && info.IsDir() {
-						fw.watchDir(event.Name)
+					// Check if it's a directory with retry
+					var isDir bool
+					err := RetryOperation(func() error {
+						info, err := os.Stat(event.Name)
+						if err != nil {
+							return err
+						}
+						isDir = info.IsDir()
+						return nil
+					}, 3)
+
+					if err == nil && isDir {
+						if watchErr := fw.watchDir(event.Name); watchErr != nil {
+							log.Printf("Failed to watch new directory %s: %v", event.Name, watchErr)
+						}
 					}
 				}
 			}
@@ -113,11 +181,20 @@ func (fw *FileWatcher) watch() {
 func (fw *FileWatcher) watchDir(dir string) error {
 	return filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			return err
+			// Log error but continue walking
+			log.Printf("Error accessing path %s: %v", path, err)
+			return nil
 		}
 
 		if info.IsDir() {
-			return fw.watcher.Add(path)
+			// Add directory to watcher with retry
+			retryErr := RetryOperation(func() error {
+				return fw.watcher.Add(path)
+			}, 3)
+
+			if retryErr != nil {
+				log.Printf("Failed to watch directory %s: %v", path, retryErr)
+			}
 		}
 
 		return nil
@@ -150,9 +227,12 @@ func (ti *TTLInvalidator) Stop() error {
 }
 
 func (ti *TTLInvalidator) InvalidatePath(path string) {
-	ti.cache.Delete(CacheKey{Path: path, Compression: NoCompression})
-	ti.cache.Delete(CacheKey{Path: path, Compression: Gzip})
-	ti.cache.Delete(CacheKey{Path: path, Compression: Brotli})
+	ti.cache.Delete(CacheKey{Path: path, Compression: NoCompression, IsVersioned: false})
+	ti.cache.Delete(CacheKey{Path: path, Compression: Gzip, IsVersioned: false})
+	ti.cache.Delete(CacheKey{Path: path, Compression: Brotli, IsVersioned: false})
+	ti.cache.Delete(CacheKey{Path: path, Compression: NoCompression, IsVersioned: true})
+	ti.cache.Delete(CacheKey{Path: path, Compression: Gzip, IsVersioned: true})
+	ti.cache.Delete(CacheKey{Path: path, Compression: Brotli, IsVersioned: true})
 }
 
 func (ti *TTLInvalidator) InvalidateAll() {
@@ -257,9 +337,12 @@ func (mi *ManualInvalidator) InvalidatePath(path string) {
 	mi.mu.Lock()
 	defer mi.mu.Unlock()
 
-	mi.cache.Delete(CacheKey{Path: path, Compression: NoCompression})
-	mi.cache.Delete(CacheKey{Path: path, Compression: Gzip})
-	mi.cache.Delete(CacheKey{Path: path, Compression: Brotli})
+	mi.cache.Delete(CacheKey{Path: path, Compression: NoCompression, IsVersioned: false})
+	mi.cache.Delete(CacheKey{Path: path, Compression: Gzip, IsVersioned: false})
+	mi.cache.Delete(CacheKey{Path: path, Compression: Brotli, IsVersioned: false})
+	mi.cache.Delete(CacheKey{Path: path, Compression: NoCompression, IsVersioned: true})
+	mi.cache.Delete(CacheKey{Path: path, Compression: Gzip, IsVersioned: true})
+	mi.cache.Delete(CacheKey{Path: path, Compression: Brotli, IsVersioned: true})
 }
 
 func (mi *ManualInvalidator) InvalidateAll() {

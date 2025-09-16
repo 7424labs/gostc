@@ -16,7 +16,12 @@ const (
 )
 
 // getCacheControl returns the appropriate Cache-Control header value based on file type
-func getCacheControl(path string, config *Config) string {
+func getCacheControl(path string, config *Config, isVersioned bool) string {
+	if isVersioned {
+		// Content-hashed assets can be cached indefinitely since they're immutable
+		return "public, max-age=31536000, immutable"
+	}
+
 	fileType := getFileType(path)
 
 	switch fileType {

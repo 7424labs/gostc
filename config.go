@@ -28,6 +28,7 @@ const (
 	DefaultShutdownTimeout   = 30 * time.Second
 	DefaultMaxHeaderBytes    = 1 << 20  // 1MB
 	DefaultMaxBodySize       = 10 << 20 // 10MB
+	DefaultMaxFileSize       = 100 << 20 // 100MB
 	DefaultCacheSize         = 100 << 20 // 100MB
 	DefaultCacheTTL          = 5 * time.Minute
 	DefaultMinCompressSize   = 1024 // 1KB
@@ -57,6 +58,7 @@ type Config struct {
 	ShutdownTimeout  time.Duration
 	MaxHeaderBytes   int
 	MaxBodySize      int64
+	MaxFileSize      int64  // Maximum file size to serve
 
 	MaxConnections   int
 	MaxRequestsPerConn int
@@ -73,12 +75,19 @@ type Config struct {
 	EnableMetrics    bool
 	MetricsEndpoint  string
 	EnablePprof      bool
+	Debug            bool  // Enable debug mode with detailed errors
 
 	EnableWatcher    bool
 
 	// Cache control settings per file type
 	StaticAssetMaxAge  int // Max age for static assets (images, fonts) in seconds
 	DynamicAssetMaxAge int // Max age for dynamic assets (HTML, JSON) in seconds
+
+	// Asset versioning settings
+	EnableVersioning    bool
+	VersioningPattern   string   // Pattern for versioned files (empty = default: base.hash.ext)
+	VersionHashLength   int      // Length of version hash (default: 16)
+	StaticPrefixes      []string // Prefixes that should be versioned
 }
 
 func DefaultConfig() *Config {
@@ -113,6 +122,7 @@ func DefaultConfig() *Config {
 		ShutdownTimeout:  DefaultShutdownTimeout,
 		MaxHeaderBytes:   DefaultMaxHeaderBytes,
 		MaxBodySize:      DefaultMaxBodySize,
+		MaxFileSize:      DefaultMaxFileSize,
 
 		MaxConnections:   DefaultMaxConnections,
 		RateLimitPerIP:   DefaultRateLimitPerIP,
@@ -124,10 +134,16 @@ func DefaultConfig() *Config {
 		EnableMetrics:    false,
 		MetricsEndpoint:  "/metrics",
 		EnablePprof:      false,
+		Debug:            false,
 		EnableWatcher:    true,
 
 		StaticAssetMaxAge:  86400,  // 24 hours for static assets
 		DynamicAssetMaxAge: 3600,   // 1 hour for dynamic content
+
+		EnableVersioning:   false,  // Disabled by default
+		VersioningPattern:  "",     // Empty means use default: base.hash.ext
+		VersionHashLength:  16,
+		StaticPrefixes:     []string{"/static/", "/assets/", "/dist/", "/build/"},
 	}
 }
 
@@ -226,6 +242,30 @@ func WithTLS(certFile, keyFile string) Option {
 		c.EnableHTTPS = true
 		c.TLSCert = certFile
 		c.TLSKey = keyFile
+	}
+}
+
+func WithVersioning(enable bool) Option {
+	return func(c *Config) {
+		c.EnableVersioning = enable
+	}
+}
+
+func WithVersioningPattern(pattern string) Option {
+	return func(c *Config) {
+		c.VersioningPattern = pattern
+	}
+}
+
+func WithVersionHashLength(length int) Option {
+	return func(c *Config) {
+		c.VersionHashLength = length
+	}
+}
+
+func WithStaticPrefixes(prefixes ...string) Option {
+	return func(c *Config) {
+		c.StaticPrefixes = prefixes
 	}
 }
 

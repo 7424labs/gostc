@@ -11,6 +11,7 @@ import (
 type CacheKey struct {
 	Path        string
 	Compression CompressionType
+	IsVersioned bool
 }
 
 type CacheEntry struct {
@@ -78,6 +79,12 @@ func (c *LRUCache) Get(key CacheKey) (*CacheEntry, bool) {
 		return nil, false
 	}
 
+	// Validate entry
+	if entry == nil {
+		c.stats.Misses++
+		return nil, false
+	}
+
 	if time.Since(entry.CreatedAt) > c.ttl {
 		c.cache.Remove(key)
 		c.currentSize -= entry.Size
@@ -91,14 +98,23 @@ func (c *LRUCache) Get(key CacheKey) (*CacheEntry, bool) {
 }
 
 func (c *LRUCache) Set(key CacheKey, entry *CacheEntry) {
+	if entry == nil {
+		return
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	// Don't cache if entry is too large
+	if entry.Size > c.maxSize {
+		return
+	}
 
 	if c.currentSize + entry.Size > c.maxSize {
 		c.evictToSize(c.maxSize - entry.Size)
 	}
 
-	if oldEntry, ok := c.cache.Get(key); ok {
+	if oldEntry, ok := c.cache.Get(key); ok && oldEntry != nil {
 		c.currentSize -= oldEntry.Size
 	}
 
@@ -227,6 +243,11 @@ func (c *LFUCache) Get(key CacheKey) (*CacheEntry, bool) {
 	defer c.mu.Unlock()
 
 	if item, ok := c.items[key]; ok {
+		if item == nil || item.entry == nil {
+			c.stats.Misses++
+			return nil, false
+		}
+
 		if time.Since(item.entry.CreatedAt) > c.ttl {
 			c.removeItem(item)
 			c.stats.Misses++
@@ -234,7 +255,9 @@ func (c *LFUCache) Get(key CacheKey) (*CacheEntry, bool) {
 		}
 
 		item.freq++
-		heap.Fix(c.freqList, item.index)
+		if item.index >= 0 && item.index < c.freqList.Len() {
+			heap.Fix(c.freqList, item.index)
+		}
 		c.stats.Hits++
 		return item.entry, true
 	}
@@ -244,16 +267,27 @@ func (c *LFUCache) Get(key CacheKey) (*CacheEntry, bool) {
 }
 
 func (c *LFUCache) Set(key CacheKey, entry *CacheEntry) {
+	if entry == nil {
+		return
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	// Don't cache if entry is too large
+	if entry.Size > c.maxSize {
+		return
+	}
+
 	entry.CreatedAt = time.Now()
 
-	if existing, ok := c.items[key]; ok {
+	if existing, ok := c.items[key]; ok && existing != nil && existing.entry != nil {
 		c.currentSize -= existing.entry.Size
 		existing.entry = entry
 		existing.freq++
-		heap.Fix(c.freqList, existing.index)
+		if existing.index >= 0 && existing.index < c.freqList.Len() {
+			heap.Fix(c.freqList, existing.index)
+		}
 		c.currentSize += entry.Size
 		return
 	}
