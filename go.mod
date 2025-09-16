@@ -1,4 +1,4 @@
-module github.com/yourusername/gostc
+module github.com/7424labs/gostc
 
 go 1.21
 

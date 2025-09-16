@@ -75,6 +75,10 @@ type Config struct {
 	EnablePprof      bool
 
 	EnableWatcher    bool
+
+	// Cache control settings per file type
+	StaticAssetMaxAge  int // Max age for static assets (images, fonts) in seconds
+	DynamicAssetMaxAge int // Max age for dynamic assets (HTML, JSON) in seconds
 }
 
 func DefaultConfig() *Config {
@@ -121,6 +125,9 @@ func DefaultConfig() *Config {
 		MetricsEndpoint:  "/metrics",
 		EnablePprof:      false,
 		EnableWatcher:    true,
+
+		StaticAssetMaxAge:  86400,  // 24 hours for static assets
+		DynamicAssetMaxAge: 3600,   // 1 hour for dynamic content
 	}
 }
 

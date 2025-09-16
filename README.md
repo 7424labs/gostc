@@ -36,7 +36,7 @@ GoSTC (Go Static Content) is a high-performance static file server written in Go
 ## Installation
 
 ```bash
-go get github.com/yourusername/gostc
+go get github.com/7424labs/gostc
 ```
 
 ## Quick Start
@@ -48,7 +48,7 @@ package main
 
 import (
     "log"
-    "github.com/yourusername/gostc"
+    "github.com/7424labs/gostc"
 )
 
 func main() {

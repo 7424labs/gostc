@@ -8,7 +8,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yourusername/gostc"
+	"github.com/7424labs/gostc"
 )
 
 func main() {

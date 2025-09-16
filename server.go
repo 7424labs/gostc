@@ -252,16 +252,26 @@ func (s *Server) serveFromCache(w http.ResponseWriter, r *http.Request, entry *C
 	w.Header().Set("Content-Type", entry.ContentType)
 	w.Header().Set("ETag", entry.ETag)
 	w.Header().Set("Last-Modified", entry.LastModified.UTC().Format(http.TimeFormat))
-	w.Header().Set("Cache-Control", "public, max-age=3600")
+	w.Header().Set("Cache-Control", getCacheControl(r.URL.Path, s.config))
 
 	if compressionType != NoCompression {
 		w.Header().Set("Content-Encoding", getEncodingName(compressionType))
 		w.Header().Set("Vary", "Accept-Encoding")
 	}
 
+	// Check If-None-Match (ETag)
 	if r.Header.Get("If-None-Match") == entry.ETag {
 		w.WriteHeader(http.StatusNotModified)
 		return
+	}
+
+	// Check If-Modified-Since
+	if ims := r.Header.Get("If-Modified-Since"); ims != "" {
+		imsTime, err := http.ParseTime(ims)
+		if err == nil && !entry.LastModified.After(imsTime) {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
 	}
 
 	if r.Method == "HEAD" {
@@ -302,11 +312,21 @@ func (s *Server) serveFileWithCompression(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Last-Modified", lastModified.UTC().Format(http.TimeFormat))
-	w.Header().Set("Cache-Control", "public, max-age=3600")
+	w.Header().Set("Cache-Control", getCacheControl(r.URL.Path, s.config))
 
+	// Check If-None-Match (ETag)
 	if r.Header.Get("If-None-Match") == etag {
 		w.WriteHeader(http.StatusNotModified)
 		return
+	}
+
+	// Check If-Modified-Since
+	if ims := r.Header.Get("If-Modified-Since"); ims != "" {
+		imsTime, err := http.ParseTime(ims)
+		if err == nil && !lastModified.After(imsTime) {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
 	}
 
 	shouldCompress := compressor != nil && compressionType != NoCompression &&
