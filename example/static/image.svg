@@ -7,5 +7,5 @@
   </defs>
   <rect width="200" height="200" fill="url(#grad)" />
   <circle cx="100" cy="100" r="80" fill="white" opacity="0.9"/>
-  <text x="100" y="110" text-anchor="middle" font-family="Arial" font-size="24" font-weight="bold" fill="#667eea">GoSTC</text>
+  <text x="100" y="110" text-anchor="middle" font-family="Arial" font-size="24" font-weight="bold" fill="#667eea">gostc</text>
 </svg>

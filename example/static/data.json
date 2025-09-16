@@ -1,5 +1,5 @@
 {
-  "name": "GoSTC",
+  "name": "gostc",
   "version": "1.0.0",
   "description": "High-performance Go static file server with compression and caching",
   "features": [

@@ -1,6 +1,6 @@
-# GoSTC - High-Performance Static File Server
+# gostc - High-Performance Static File Server
 
-GoSTC (Go Static Content) is a high-performance static file server written in Go with built-in compression, caching, and automatic cache invalidation.
+gostc (Go Static Content) is a high-performance static file server written in Go with built-in compression, caching, and automatic cache invalidation.
 
 ## Features
 

@@ -1,4 +1,4 @@
-console.log('GoSTC Static File Server - Example Application');
+console.log('gostc Static File Server - Example Application');
 
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DOM loaded successfully');
