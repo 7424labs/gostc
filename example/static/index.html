@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GoSTC - Static File Server</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>GoSTC Static File Server</h1>
+        <p>High-performance static file server with compression and caching</p>
+
+        <h2>Features</h2>
+        <ul>
+            <li>Gzip & Brotli compression</li>
+            <li>In-memory cache with TTL</li>
+            <li>File watching with automatic cache invalidation</li>
+            <li>Rate limiting per IP</li>
+            <li>CORS support</li>
+            <li>Security headers</li>
+            <li>Prometheus metrics</li>
+            <li>HTTP/2 support</li>
+        </ul>
+
+        <h2>Test Files</h2>
+        <ul>
+            <li><a href="app.js">JavaScript file (will be compressed)</a></li>
+            <li><a href="style.css">CSS file (will be compressed)</a></li>
+            <li><a href="data.json">JSON data (will be compressed)</a></li>
+            <li><a href="image.svg">SVG image (will be compressed)</a></li>
+        </ul>
+
+        <script src="app.js"></script>
+    </div>
+</body>
+</html>
