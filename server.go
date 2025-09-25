@@ -432,12 +432,20 @@ func (s *Server) serveFileWithCompression(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	// Process HTML files to inject versioned asset references BEFORE compression
+	processedData := data
+	if s.config.EnableVersioning && (contentType == "text/html" || strings.Contains(contentType, "text/html")) {
+		processedData = s.htmlProcessor.ProcessHTML(data, originalPath)
+		// Update ETag after HTML processing since content changed
+		etag = generateETag(processedData)
+	}
+
 	shouldCompress := compressor != nil && compressionType != NoCompression &&
 		s.compression.ShouldCompress(contentType, info.Size())
 
 	var responseData []byte
 	if shouldCompress {
-		compressed, err := compressor.Compress(data, s.config.CompressionLevel)
+		compressed, err := compressor.Compress(processedData, s.config.CompressionLevel)
 		if err == nil {
 			responseData = compressed
 			w.Header().Set("Content-Encoding", getEncodingName(compressionType))
@@ -452,18 +460,10 @@ func (s *Server) serveFileWithCompression(w http.ResponseWriter, r *http.Request
 			}
 			s.cache.Set(CacheKey{Path: r.URL.Path, Compression: compressionType, IsVersioned: isVersioned}, entry)
 		} else {
-			responseData = data
+			responseData = processedData
 		}
 	} else {
-		responseData = data
-
-		// Process HTML files to inject versioned asset references
-		if s.config.EnableVersioning && (contentType == "text/html" || strings.Contains(contentType, "text/html")) {
-			responseData = s.htmlProcessor.ProcessHTML(responseData, originalPath)
-			// Update ETag after HTML processing since content changed
-			etag = generateETag(responseData)
-			w.Header().Set("ETag", etag)
-		}
+		responseData = processedData
 
 		entry := &CacheEntry{
 			Data:         responseData,
