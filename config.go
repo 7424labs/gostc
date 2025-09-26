@@ -21,84 +21,84 @@ const (
 )
 
 const (
-	DefaultReadTimeout       = 15 * time.Second
-	DefaultWriteTimeout      = 15 * time.Second
-	DefaultIdleTimeout       = 60 * time.Second
-	DefaultHeaderTimeout     = 5 * time.Second
-	DefaultShutdownTimeout   = 30 * time.Second
-	DefaultMaxHeaderBytes    = 1 << 20  // 1MB
-	DefaultMaxBodySize       = 10 << 20 // 10MB
-	DefaultMaxFileSize       = 100 << 20 // 100MB
-	DefaultCacheSize         = 100 << 20 // 100MB
-	DefaultCacheTTL          = 5 * time.Minute
-	DefaultMinCompressSize   = 1024 // 1KB
-	DefaultCompressionLevel  = 6
-	DefaultMaxConnections    = 1000
-	DefaultRateLimitPerIP    = 100 // requests per second
+	DefaultReadTimeout      = 15 * time.Second
+	DefaultWriteTimeout     = 15 * time.Second
+	DefaultIdleTimeout      = 60 * time.Second
+	DefaultHeaderTimeout    = 5 * time.Second
+	DefaultShutdownTimeout  = 30 * time.Second
+	DefaultMaxHeaderBytes   = 1 << 20   // 1MB
+	DefaultMaxBodySize      = 10 << 20  // 10MB
+	DefaultMaxFileSize      = 100 << 20 // 100MB
+	DefaultCacheSize        = 100 << 20 // 100MB
+	DefaultCacheTTL         = 5 * time.Minute
+	DefaultMinCompressSize  = 1024 // 1KB
+	DefaultCompressionLevel = 6
+	DefaultMaxConnections   = 1000
+	DefaultRateLimitPerIP   = 100 // requests per second
 )
 
 type Config struct {
-	Root             string
-	IndexFile        string
-	AllowBrowsing    bool
+	Root          string
+	IndexFile     string
+	AllowBrowsing bool
 
-	Compression      CompressionType
-	CompressionLevel int
+	Compression       CompressionType
+	CompressionLevel  int
 	MinSizeToCompress int64
-	CompressTypes    []string
+	CompressTypes     []string
 
-	CacheSize        int64
-	CacheTTL         time.Duration
-	CacheStrategy    CacheStrategy
+	CacheSize     int64
+	CacheTTL      time.Duration
+	CacheStrategy CacheStrategy
 
-	ReadTimeout      time.Duration
+	ReadTimeout       time.Duration
 	ReadHeaderTimeout time.Duration
-	WriteTimeout     time.Duration
-	IdleTimeout      time.Duration
-	ShutdownTimeout  time.Duration
-	MaxHeaderBytes   int
-	MaxBodySize      int64
-	MaxFileSize      int64  // Maximum file size to serve
+	WriteTimeout      time.Duration
+	IdleTimeout       time.Duration
+	ShutdownTimeout   time.Duration
+	MaxHeaderBytes    int
+	MaxBodySize       int64
+	MaxFileSize       int64 // Maximum file size to serve
 
-	MaxConnections   int
+	MaxConnections     int
 	MaxRequestsPerConn int
-	RateLimitPerIP   int
+	RateLimitPerIP     int
 
-	AllowedOrigins   []string
-	AllowedMethods   []string
-	CSPHeader        string
-	EnableHTTPS      bool
-	TLSCert          string
-	TLSKey           string
-	HTTP2            bool
+	AllowedOrigins []string
+	AllowedMethods []string
+	CSPHeader      string
+	EnableHTTPS    bool
+	TLSCert        string
+	TLSKey         string
+	HTTP2          bool
 
-	EnableMetrics    bool
-	MetricsEndpoint  string
-	EnablePprof      bool
-	Debug            bool  // Enable debug mode with detailed errors
+	EnableMetrics   bool
+	MetricsEndpoint string
+	EnablePprof     bool
+	Debug           bool // Enable debug mode with detailed errors
 
-	EnableWatcher    bool
+	EnableWatcher bool
 
 	// Cache control settings per file type
 	StaticAssetMaxAge  int // Max age for static assets (images, fonts) in seconds
 	DynamicAssetMaxAge int // Max age for dynamic assets (HTML, JSON) in seconds
 
 	// Asset versioning settings
-	EnableVersioning    bool
-	VersioningPattern   string   // Pattern for versioned files (empty = default: base.hash.ext)
-	VersionHashLength   int      // Length of version hash (default: 16)
-	StaticPrefixes      []string // Prefixes that should be versioned
-	URLPrefix           string   // URL prefix for serving (e.g., "/static")
+	EnableVersioning  bool
+	VersioningPattern string   // Pattern for versioned files (empty = default: base.hash.ext)
+	VersionHashLength int      // Length of version hash (default: 16)
+	StaticPrefixes    []string // Prefixes that should be versioned
+	URLPrefix         string   // URL prefix for serving (e.g., "/static")
 }
 
 func DefaultConfig() *Config {
 	return &Config{
-		Root:             "./static",
-		IndexFile:        "index.html",
-		AllowBrowsing:    false,
+		Root:          "./static",
+		IndexFile:     "index.html",
+		AllowBrowsing: false,
 
-		Compression:      Gzip | Brotli,
-		CompressionLevel: DefaultCompressionLevel,
+		Compression:       Gzip | Brotli,
+		CompressionLevel:  DefaultCompressionLevel,
 		MinSizeToCompress: DefaultMinCompressSize,
 		CompressTypes: []string{
 			"text/html",
@@ -112,39 +112,39 @@ func DefaultConfig() *Config {
 			"image/svg+xml",
 		},
 
-		CacheSize:        DefaultCacheSize,
-		CacheTTL:         DefaultCacheTTL,
-		CacheStrategy:    LRU,
+		CacheSize:     DefaultCacheSize,
+		CacheTTL:      DefaultCacheTTL,
+		CacheStrategy: LRU,
 
-		ReadTimeout:      DefaultReadTimeout,
+		ReadTimeout:       DefaultReadTimeout,
 		ReadHeaderTimeout: DefaultHeaderTimeout,
-		WriteTimeout:     DefaultWriteTimeout,
-		IdleTimeout:      DefaultIdleTimeout,
-		ShutdownTimeout:  DefaultShutdownTimeout,
-		MaxHeaderBytes:   DefaultMaxHeaderBytes,
-		MaxBodySize:      DefaultMaxBodySize,
-		MaxFileSize:      DefaultMaxFileSize,
+		WriteTimeout:      DefaultWriteTimeout,
+		IdleTimeout:       DefaultIdleTimeout,
+		ShutdownTimeout:   DefaultShutdownTimeout,
+		MaxHeaderBytes:    DefaultMaxHeaderBytes,
+		MaxBodySize:       DefaultMaxBodySize,
+		MaxFileSize:       DefaultMaxFileSize,
 
-		MaxConnections:   DefaultMaxConnections,
-		RateLimitPerIP:   DefaultRateLimitPerIP,
+		MaxConnections: DefaultMaxConnections,
+		RateLimitPerIP: DefaultRateLimitPerIP,
 
-		AllowedOrigins:   []string{"*"},
-		AllowedMethods:   []string{"GET", "HEAD", "OPTIONS"},
-		HTTP2:            true,
+		AllowedOrigins: []string{"*"},
+		AllowedMethods: []string{"GET", "HEAD", "OPTIONS"},
+		HTTP2:          true,
 
-		EnableMetrics:    false,
-		MetricsEndpoint:  "/metrics",
-		EnablePprof:      false,
-		Debug:            false,
-		EnableWatcher:    true,
+		EnableMetrics:   false,
+		MetricsEndpoint: "/metrics",
+		EnablePprof:     false,
+		Debug:           false,
+		EnableWatcher:   true,
 
-		StaticAssetMaxAge:  86400,  // 24 hours for static assets
-		DynamicAssetMaxAge: 3600,   // 1 hour for dynamic content
+		StaticAssetMaxAge:  86400, // 24 hours for static assets
+		DynamicAssetMaxAge: 3600,  // 1 hour for dynamic content
 
-		EnableVersioning:   false,  // Disabled by default
-		VersioningPattern:  "",     // Empty means use default: base.hash.ext
-		VersionHashLength:  16,
-		StaticPrefixes:     []string{"/static/", "/assets/", "/dist/", "/build/"},
+		EnableVersioning:  false, // Disabled by default
+		VersioningPattern: "",    // Empty means use default: base.hash.ext
+		VersionHashLength: 4,
+		StaticPrefixes:    []string{"/static/", "/assets/", "/dist/", "/build/"},
 	}
 }
 
@@ -187,11 +187,11 @@ func WithCacheStrategy(strategy CacheStrategy) Option {
 }
 
 type TimeoutConfig struct {
-	Read       time.Duration
-	Write      time.Duration
-	Idle       time.Duration
-	Header     time.Duration
-	Shutdown   time.Duration
+	Read     time.Duration
+	Write    time.Duration
+	Idle     time.Duration
+	Header   time.Duration
+	Shutdown time.Duration
 }
 
 func WithTimeouts(tc TimeoutConfig) Option {
