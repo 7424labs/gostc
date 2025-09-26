@@ -152,6 +152,10 @@ func (avm *AssetVersionManager) ScanDirectory(rootPath string) error {
 		scannedCount++
 
 		if !avm.shouldVersionFile(relativePath) {
+			// Debug: show why file is not being versioned
+			if strings.Contains(relativePath, ".css") || strings.Contains(relativePath, ".js") {
+				fmt.Printf("  ⚠️ Skipping %s (not matching prefixes: %v)\n", relativePath, avm.config.StaticPrefixes)
+			}
 			return nil
 		}
 
