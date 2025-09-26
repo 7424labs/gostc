@@ -2,6 +2,7 @@ package gostc
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -96,7 +97,7 @@ func TestConfigurationOptions(t *testing.T) {
 			WithRoot(tempDir),
 			WithVersioning(true),
 			WithVersioningPattern("{base}-{hash}{ext}"),
-			WithVersionHashLength(20),
+			WithVersionHashLength(16),
 			WithStaticPrefixes("/assets/"),
 		)
 		if err != nil {
@@ -110,7 +111,7 @@ func TestConfigurationOptions(t *testing.T) {
 		if config.VersioningPattern != "{base}-{hash}{ext}" {
 			t.Error("Custom pattern not set correctly")
 		}
-		if config.VersionHashLength != 20 {
+		if config.VersionHashLength != 16 {
 			t.Error("Custom hash length not set correctly")
 		}
 		if len(config.StaticPrefixes) != 1 || config.StaticPrefixes[0] != "/assets/" {
@@ -178,14 +179,14 @@ func TestConfigurationValidation(t *testing.T) {
 		server, err := New(
 			WithRoot(tempDir),
 			WithVersioning(true),
-			WithVersionHashLength(2), // Very small
+			WithVersionHashLength(4), // Minimum allowed
 		)
 		if err != nil {
 			t.Fatalf("Failed to create server: %v", err)
 		}
 
 		// Should still work, just with short hashes
-		if server.versionManager.hashLength != 2 {
+		if server.versionManager.hashLength != 4 {
 			t.Error("Should accept small hash length")
 		}
 	})
@@ -439,6 +440,180 @@ func TestWatcherConfiguration(t *testing.T) {
 
 		if server.config.EnableWatcher {
 			t.Error("Should disable file watcher")
+		}
+	})
+}
+
+func TestNewSimplifiedAPIs(t *testing.T) {
+	t.Run("NewAutoServer", func(t *testing.T) {
+		// Create test directory structure
+		tempDir, err := os.MkdirTemp("", "gostc-auto-test-*")
+		if err != nil {
+			t.Fatalf("Failed to create temp dir: %v", err)
+		}
+		defer os.RemoveAll(tempDir)
+
+		// Create index.html and asset directories
+		if err := os.WriteFile(filepath.Join(tempDir, "index.html"), []byte("<html></html>"), 0644); err != nil {
+			t.Fatalf("Failed to create index.html: %v", err)
+		}
+
+		cssDir := filepath.Join(tempDir, "css")
+		if err := os.MkdirAll(cssDir, 0755); err != nil {
+			t.Fatalf("Failed to create css dir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(cssDir, "style.css"), []byte("body{}"), 0644); err != nil {
+			t.Fatalf("Failed to create style.css: %v", err)
+		}
+
+		server, err := NewAutoServer(tempDir)
+		if err != nil {
+			t.Fatalf("Failed to create auto server: %v", err)
+		}
+
+		// Should auto-detect versioning for SPA-like structure
+		if !server.config.EnableVersioning {
+			t.Error("Auto-detection should enable versioning for SPA structure")
+		}
+		if server.config.VersionHashLength != 8 {
+			t.Errorf("Expected default hash length 8, got %d", server.config.VersionHashLength)
+		}
+	})
+
+	t.Run("NewSimpleServer", func(t *testing.T) {
+		tempDir, err := os.MkdirTemp("", "gostc-simple-test-*")
+		if err != nil {
+			t.Fatalf("Failed to create temp dir: %v", err)
+		}
+		defer os.RemoveAll(tempDir)
+
+		server, err := NewSimpleServer(SimpleConfig{
+			Root:       tempDir,
+			URLPrefix:  "/static",
+			Versioning: true,
+			Cache:      true,
+			Compress:   true,
+			Debug:      false,
+		})
+		if err != nil {
+			t.Fatalf("Failed to create simple server: %v", err)
+		}
+
+		if !server.config.EnableVersioning {
+			t.Error("Versioning should be enabled")
+		}
+		if server.config.URLPrefix != "/static" {
+			t.Errorf("Expected URL prefix '/static', got %s", server.config.URLPrefix)
+		}
+		if server.config.VersionHashLength != 8 {
+			t.Errorf("Expected hash length 8, got %d", server.config.VersionHashLength)
+		}
+	})
+
+	t.Run("NewWithPresetServer", func(t *testing.T) {
+		tempDir, err := os.MkdirTemp("", "gostc-preset-test-*")
+		if err != nil {
+			t.Fatalf("Failed to create temp dir: %v", err)
+		}
+		defer os.RemoveAll(tempDir)
+
+		server, err := NewWithPresetServer(PresetSPA, WithRoot(tempDir))
+		if err != nil {
+			t.Fatalf("Failed to create preset server: %v", err)
+		}
+
+		if !server.config.EnableVersioning {
+			t.Error("SPA preset should enable versioning")
+		}
+		if server.config.VersionHashLength != 8 {
+			t.Errorf("Expected hash length 8, got %d", server.config.VersionHashLength)
+		}
+		if server.config.StaticAssetMaxAge != 31536000 {
+			t.Errorf("Expected long cache for static assets, got %d", server.config.StaticAssetMaxAge)
+		}
+	})
+
+	t.Run("NewWithConfig", func(t *testing.T) {
+		tempDir, err := os.MkdirTemp("", "gostc-config-test-*")
+		if err != nil {
+			t.Fatalf("Failed to create temp dir: %v", err)
+		}
+		defer os.RemoveAll(tempDir)
+
+		config := NewWithPreset(PresetStaticSite)
+		config.Root = tempDir
+
+		server, err := NewWithConfig(config)
+		if err != nil {
+			t.Fatalf("Failed to create server with config: %v", err)
+		}
+
+		if !server.config.EnableVersioning {
+			t.Error("Static site preset should enable versioning")
+		}
+		if server.config.Root != tempDir {
+			t.Error("Root should be set correctly")
+		}
+	})
+}
+
+func TestNewPresets(t *testing.T) {
+	t.Run("PresetSPA", func(t *testing.T) {
+		config := NewWithPreset(PresetSPA)
+
+		if !config.EnableVersioning {
+			t.Error("SPA preset should enable versioning")
+		}
+		if config.VersionHashLength != 8 {
+			t.Errorf("Expected hash length 8, got %d", config.VersionHashLength)
+		}
+		if config.StaticAssetMaxAge != 31536000 {
+			t.Error("SPA should have long cache for versioned assets")
+		}
+		if config.DynamicAssetMaxAge != 0 {
+			t.Error("SPA should have no cache for HTML")
+		}
+	})
+
+	t.Run("PresetStaticSite", func(t *testing.T) {
+		config := NewWithPreset(PresetStaticSite)
+
+		if !config.EnableVersioning {
+			t.Error("Static site preset should enable versioning")
+		}
+		if len(config.StaticPrefixes) < 2 {
+			t.Error("Static site should have multiple asset prefixes")
+		}
+		if config.StaticAssetMaxAge != 31536000 {
+			t.Error("Static site should have long cache for versioned assets")
+		}
+	})
+
+	t.Run("PresetAPI", func(t *testing.T) {
+		config := NewWithPreset(PresetAPI)
+
+		if config.EnableVersioning {
+			t.Error("API preset should not enable versioning")
+		}
+		if !config.EnableMetrics {
+			t.Error("API preset should enable metrics")
+		}
+		if config.DynamicAssetMaxAge != 0 {
+			t.Error("API preset should have no cache for dynamic content")
+		}
+	})
+
+	t.Run("PresetHybrid", func(t *testing.T) {
+		config := NewWithPreset(PresetHybrid)
+
+		if !config.EnableVersioning {
+			t.Error("Hybrid preset should enable versioning")
+		}
+		if !config.EnableWatcher {
+			t.Error("Hybrid preset should enable file watching")
+		}
+		if config.DynamicAssetMaxAge != 300 {
+			t.Error("Hybrid preset should have moderate cache for dynamic content")
 		}
 	})
 }

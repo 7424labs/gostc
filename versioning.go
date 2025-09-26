@@ -28,9 +28,9 @@ type HTMLProcessor struct {
 }
 
 func NewAssetVersionManager(config *Config) *AssetVersionManager {
-	hashLength := 16
-	if config.VersionHashLength > 0 {
-		hashLength = config.VersionHashLength
+	hashLength := config.VersionHashLength
+	if hashLength <= 0 {
+		hashLength = 8 // Default to match config default
 	}
 
 	return &AssetVersionManager{
@@ -205,9 +205,21 @@ func (avm *AssetVersionManager) shouldVersionFile(path string) bool {
 		avm.config.StaticPrefixes = []string{"/static/", "/assets/", "/dist/", "/build/"}
 	}
 
+	// If we have a URL prefix, we need to check for both prefixed and non-prefixed paths
 	for _, prefix := range avm.config.StaticPrefixes {
+		// Check direct prefix match
 		if strings.HasPrefix(path, prefix) {
 			return avm.isVersionableExtension(path)
+		}
+
+		// If URL prefix is set, also check without the URL prefix
+		// e.g., URLPrefix="/static", path="/css/style.css", prefix="/static/css/"
+		if avm.urlPrefix != "" {
+			// Remove URL prefix from the static prefix for comparison
+			normalizedPrefix := strings.TrimPrefix(prefix, avm.urlPrefix)
+			if normalizedPrefix != prefix && strings.HasPrefix(path, normalizedPrefix) {
+				return avm.isVersionableExtension(path)
+			}
 		}
 	}
 

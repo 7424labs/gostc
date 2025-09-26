@@ -1,6 +1,10 @@
 package gostc
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -260,6 +264,11 @@ func WithVersioningPattern(pattern string) Option {
 
 func WithVersionHashLength(length int) Option {
 	return func(c *Config) {
+		if length < 4 {
+			length = 4 // Minimum hash length
+		} else if length > 16 {
+			length = 16 // Maximum hash length
+		}
 		c.VersionHashLength = length
 	}
 }
@@ -282,6 +291,10 @@ const (
 	PresetDevelopment Preset = iota
 	PresetProduction
 	PresetHighPerformance
+	PresetSPA
+	PresetStaticSite
+	PresetAPI
+	PresetHybrid
 )
 
 func NewWithPreset(preset Preset) *Config {
@@ -309,7 +322,177 @@ func NewWithPreset(preset Preset) *Config {
 		config.RateLimitPerIP = 1000
 		config.ReadTimeout = 30 * time.Second
 		config.WriteTimeout = 30 * time.Second
+
+	case PresetSPA:
+		// Single-page application with versioning
+		config.EnableVersioning = true
+		config.VersionHashLength = 8
+		config.StaticPrefixes = []string{"/static/", "/assets/"}
+		config.CacheSize = 50 << 20 // 50MB
+		config.CacheTTL = 5 * time.Minute
+		config.EnableWatcher = true
+		config.StaticAssetMaxAge = 31536000 // 1 year for versioned assets
+		config.DynamicAssetMaxAge = 0       // No cache for HTML
+
+	case PresetStaticSite:
+		// Static website with aggressive caching and versioning
+		config.EnableVersioning = true
+		config.VersionHashLength = 8
+		config.StaticPrefixes = []string{"/css/", "/js/", "/images/", "/assets/"}
+		config.CacheSize = 100 << 20 // 100MB
+		config.CacheTTL = 10 * time.Minute
+		config.AllowBrowsing = false
+		config.StaticAssetMaxAge = 31536000 // 1 year for versioned assets
+		config.DynamicAssetMaxAge = 3600    // 1 hour for HTML
+
+	case PresetAPI:
+		// API server with minimal static assets
+		config.EnableVersioning = false
+		config.CacheSize = 10 << 20 // 10MB
+		config.CacheTTL = 1 * time.Minute
+		config.StaticAssetMaxAge = 86400 // 1 day
+		config.DynamicAssetMaxAge = 0    // No cache
+		config.EnableMetrics = true
+
+	case PresetHybrid:
+		// Full-stack app with both API and static assets
+		config.EnableVersioning = true
+		config.VersionHashLength = 8
+		config.StaticPrefixes = []string{"/static/", "/assets/", "/public/"}
+		config.CacheSize = 100 << 20 // 100MB
+		config.CacheTTL = 5 * time.Minute
+		config.EnableWatcher = true
+		config.StaticAssetMaxAge = 86400 // 1 day for static assets
+		config.DynamicAssetMaxAge = 300  // 5 minutes for dynamic content
 	}
 
 	return config
+}
+
+// NewAuto creates a new server with automatic configuration based on directory structure
+func NewAuto(root string) (*Config, error) {
+	config := DefaultConfig()
+	config.Root = root
+
+	// Auto-detect if this looks like a SPA or static site
+	hasIndexHTML := false
+	hasAssetDirs := false
+	assetDirs := []string{}
+
+	if stat, err := os.Stat(filepath.Join(root, "index.html")); err == nil && !stat.IsDir() {
+		hasIndexHTML = true
+	}
+
+	// Check for common asset directories
+	commonDirs := []string{"css", "js", "images", "assets", "static", "dist", "build"}
+	for _, dir := range commonDirs {
+		if stat, err := os.Stat(filepath.Join(root, dir)); err == nil && stat.IsDir() {
+			hasAssetDirs = true
+			assetDirs = append(assetDirs, "/"+dir+"/")
+		}
+	}
+
+	// Auto-configure based on detected structure
+	if hasIndexHTML && hasAssetDirs {
+		// Looks like a SPA or static site
+		config.EnableVersioning = true
+		config.VersionHashLength = 8
+		config.StaticPrefixes = assetDirs
+		config.CacheSize = 50 << 20 // 50MB
+		config.CacheTTL = 5 * time.Minute
+		config.EnableWatcher = true
+		config.StaticAssetMaxAge = 31536000 // 1 year for versioned assets
+		config.DynamicAssetMaxAge = 3600    // 1 hour for HTML
+	} else if hasAssetDirs {
+		// Has assets but no index.html, might be an API with static assets
+		config.EnableVersioning = true
+		config.VersionHashLength = 8
+		config.StaticPrefixes = assetDirs
+		config.CacheSize = 25 << 20 // 25MB
+		config.CacheTTL = 2 * time.Minute
+		config.StaticAssetMaxAge = 86400 // 1 day
+	} else {
+		// Simple static file server
+		config.EnableVersioning = false
+		config.CacheSize = 10 << 20 // 10MB
+		config.CacheTTL = 1 * time.Minute
+	}
+
+	return config, nil
+}
+
+// SimpleConfig provides a simplified configuration structure for common use cases
+type SimpleConfig struct {
+	Root       string
+	URLPrefix  string
+	Versioning bool
+	Cache      bool
+	Compress   bool
+	Debug      bool
+}
+
+// NewSimple creates a new server with simplified configuration
+func NewSimple(sc SimpleConfig) (*Config, error) {
+	config := DefaultConfig()
+
+	if sc.Root != "" {
+		config.Root = sc.Root
+	}
+
+	if sc.URLPrefix != "" {
+		config.URLPrefix = sc.URLPrefix
+	}
+
+	config.EnableVersioning = sc.Versioning
+	if sc.Versioning {
+		config.VersionHashLength = 8
+		// If URL prefix is set, use it in static prefixes
+		if sc.URLPrefix != "" {
+			config.StaticPrefixes = []string{sc.URLPrefix + "/"}
+		} else {
+			config.StaticPrefixes = []string{"/static/", "/assets/", "/css/", "/js/"}
+		}
+		config.StaticAssetMaxAge = 31536000 // 1 year for versioned assets
+	}
+
+	if !sc.Cache {
+		config.CacheSize = 0
+	}
+
+	if !sc.Compress {
+		config.Compression = NoCompression
+	}
+
+	config.Debug = sc.Debug
+
+	return config, nil
+}
+
+// ValidateConfig validates the configuration and returns an error if invalid
+func (c *Config) Validate() error {
+	// Validate hash length
+	if c.VersionHashLength < 4 || c.VersionHashLength > 16 {
+		return fmt.Errorf("version hash length must be between 4 and 16 characters, got %d", c.VersionHashLength)
+	}
+
+	// Validate hash length is even (since we use half of hash bytes)
+	if c.VersionHashLength%2 != 0 {
+		return fmt.Errorf("version hash length must be even, got %d", c.VersionHashLength)
+	}
+
+	// Validate URL prefix and static prefixes compatibility
+	if c.EnableVersioning && c.URLPrefix != "" && len(c.StaticPrefixes) > 0 {
+		hasCompatiblePrefix := false
+		for _, prefix := range c.StaticPrefixes {
+			if strings.HasPrefix(prefix, c.URLPrefix) || c.URLPrefix == strings.TrimSuffix(prefix, "/") {
+				hasCompatiblePrefix = true
+				break
+			}
+		}
+		if !hasCompatiblePrefix {
+			return fmt.Errorf("when using versioning with URLPrefix '%s', at least one StaticPrefix should be compatible (e.g., '%s/')", c.URLPrefix, c.URLPrefix)
+		}
+	}
+
+	return nil
 }

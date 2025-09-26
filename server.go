@@ -54,6 +54,11 @@ func New(opts ...Option) (*Server, error) {
 		opt(config)
 	}
 
+	// Validate configuration
+	if err := config.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+
 	cache, err := NewCache(config)
 	if err != nil {
 		return nil, err
@@ -708,4 +713,111 @@ func getEncodingName(compressionType CompressionType) string {
 	default:
 		return ""
 	}
+}
+
+// Convenience functions for simplified API
+
+// NewWithPresetServer creates a new server with a preset configuration
+func NewWithPresetServer(preset Preset, opts ...Option) (*Server, error) {
+	config := NewWithPreset(preset)
+
+	// Apply additional options
+	for _, opt := range opts {
+		opt(config)
+	}
+
+	return NewWithConfig(config)
+}
+
+// NewAutoServer creates a new server with automatic configuration
+func NewAutoServer(root string, opts ...Option) (*Server, error) {
+	config, err := NewAuto(root)
+	if err != nil {
+		return nil, fmt.Errorf("failed to auto-configure: %w", err)
+	}
+
+	// Apply additional options
+	for _, opt := range opts {
+		opt(config)
+	}
+
+	return NewWithConfig(config)
+}
+
+// NewSimpleServer creates a new server with simplified configuration
+func NewSimpleServer(sc SimpleConfig, opts ...Option) (*Server, error) {
+	config, err := NewSimple(sc)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create simple config: %w", err)
+	}
+
+	// Apply additional options
+	for _, opt := range opts {
+		opt(config)
+	}
+
+	return NewWithConfig(config)
+}
+
+// NewWithConfig creates a new server with the provided configuration
+func NewWithConfig(config *Config) (*Server, error) {
+	// Validate configuration
+	if err := config.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	cache, err := NewCache(config)
+	if err != nil {
+		return nil, err
+	}
+
+	compression := NewCompressionManager(config)
+	versionManager := NewAssetVersionManager(config)
+	htmlProcessor := NewHTMLProcessor(versionManager)
+
+	s := &Server{
+		config:         config,
+		cache:          cache,
+		compression:    compression,
+		versionManager: versionManager,
+		htmlProcessor:  htmlProcessor,
+		csrfProtection: NewCSRFProtection(time.Hour),
+		rateLimiter:    NewIPRateLimiter(config.RateLimitPerIP, config.RateLimitPerIP*10, 5*time.Minute),
+		errorHandler:   NewErrorHandler(config.Debug),
+		shutdown:       make(chan struct{}),
+	}
+
+	if config.EnableWatcher {
+		var watcher *FileWatcher
+		var err error
+
+		if config.EnableVersioning {
+			watcher, err = NewVersionedFileWatcher(config.Root, cache, compression, versionManager)
+		} else {
+			watcher, err = NewFileWatcher(config.Root, cache, compression)
+		}
+
+		if err != nil {
+			return nil, err
+		}
+		s.invalidator = watcher
+	} else {
+		s.invalidator = NewManualInvalidator(cache)
+	}
+
+	if config.EnableMetrics {
+		s.setupMetrics()
+	}
+
+	// Initialize asset versioning if enabled
+	if config.EnableVersioning {
+		if err := s.versionManager.ScanDirectory(config.Root); err != nil {
+			return nil, fmt.Errorf("failed to scan directory for versioning: %w", err)
+		}
+	}
+
+	s.setupHandler()
+	s.setupHTTPServer()
+
+	return s, nil
 }

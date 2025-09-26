@@ -286,12 +286,12 @@ func TestVersioningErrorConditions(t *testing.T) {
 	t.Run("ZeroHashLength", func(t *testing.T) {
 		config := &Config{
 			EnableVersioning:  true,
-			VersionHashLength: 0, // Should default to 16
+			VersionHashLength: 0, // Should default to 8
 		}
 
 		avm := NewAssetVersionManager(config)
-		if avm.hashLength != 16 {
-			t.Errorf("Expected default hash length 16, got %d", avm.hashLength)
+		if avm.hashLength != 8 {
+			t.Errorf("Expected default hash length 8, got %d", avm.hashLength)
 		}
 	})
 }
