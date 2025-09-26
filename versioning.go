@@ -18,6 +18,7 @@ type AssetVersionManager struct {
 	mu             sync.RWMutex
 	config         *Config
 	hashLength     int
+	urlPrefix      string // URL prefix for serving (e.g., "/static")
 }
 
 type HTMLProcessor struct {
@@ -38,6 +39,7 @@ func NewAssetVersionManager(config *Config) *AssetVersionManager {
 		contentHashes:  make(map[string]string),
 		config:         config,
 		hashLength:     hashLength,
+		urlPrefix:      config.URLPrefix,
 	}
 }
 
@@ -74,12 +76,29 @@ func (avm *AssetVersionManager) RegisterAsset(originalPath string, content []byt
 
 	versionedPath, hash := avm.GenerateVersionedPath(originalPath, content)
 
-	avm.versionedPaths[originalPath] = versionedPath
-	avm.originalPaths[versionedPath] = originalPath
-	avm.contentHashes[originalPath] = hash
+	// If URL prefix is set, also register with prefixed paths for HTML matching
+	if avm.urlPrefix != "" {
+		prefixedOriginal := avm.urlPrefix + originalPath
+		prefixedVersioned := avm.urlPrefix + versionedPath
 
-	// Debug output
-	fmt.Printf("  ✓ Registered: %s → %s\n", originalPath, versionedPath)
+		// Register both with and without prefix
+		avm.versionedPaths[originalPath] = versionedPath
+		avm.versionedPaths[prefixedOriginal] = prefixedVersioned
+		avm.originalPaths[versionedPath] = originalPath
+		avm.originalPaths[prefixedVersioned] = originalPath
+		avm.contentHashes[originalPath] = hash
+		avm.contentHashes[prefixedOriginal] = hash
+
+		// Debug output
+		fmt.Printf("  ✓ Registered: %s → %s (also as %s → %s)\n", originalPath, versionedPath, prefixedOriginal, prefixedVersioned)
+	} else {
+		avm.versionedPaths[originalPath] = versionedPath
+		avm.originalPaths[versionedPath] = originalPath
+		avm.contentHashes[originalPath] = hash
+
+		// Debug output
+		fmt.Printf("  ✓ Registered: %s → %s\n", originalPath, versionedPath)
+	}
 }
 
 func (avm *AssetVersionManager) GetVersionedPath(originalPath string) (string, bool) {

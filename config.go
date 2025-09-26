@@ -88,6 +88,7 @@ type Config struct {
 	VersioningPattern   string   // Pattern for versioned files (empty = default: base.hash.ext)
 	VersionHashLength   int      // Length of version hash (default: 16)
 	StaticPrefixes      []string // Prefixes that should be versioned
+	URLPrefix           string   // URL prefix for serving (e.g., "/static")
 }
 
 func DefaultConfig() *Config {
@@ -266,6 +267,12 @@ func WithVersionHashLength(length int) Option {
 func WithStaticPrefixes(prefixes ...string) Option {
 	return func(c *Config) {
 		c.StaticPrefixes = prefixes
+	}
+}
+
+func WithURLPrefix(prefix string) Option {
+	return func(c *Config) {
+		c.URLPrefix = prefix
 	}
 }
 
