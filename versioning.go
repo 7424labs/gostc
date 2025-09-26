@@ -77,6 +77,9 @@ func (avm *AssetVersionManager) RegisterAsset(originalPath string, content []byt
 	avm.versionedPaths[originalPath] = versionedPath
 	avm.originalPaths[versionedPath] = originalPath
 	avm.contentHashes[originalPath] = hash
+
+	// Debug output
+	fmt.Printf("  ✓ Registered: %s → %s\n", originalPath, versionedPath)
 }
 
 func (avm *AssetVersionManager) GetVersionedPath(originalPath string) (string, bool) {
@@ -128,7 +131,10 @@ func (avm *AssetVersionManager) ScanDirectory(rootPath string) error {
 		return nil
 	}
 
-	return filepath.Walk(rootPath, func(fullPath string, info os.FileInfo, err error) error {
+	scannedCount := 0
+	registeredCount := 0
+
+	err := filepath.Walk(rootPath, func(fullPath string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -143,6 +149,8 @@ func (avm *AssetVersionManager) ScanDirectory(rootPath string) error {
 			relativePath = "/" + relativePath
 		}
 
+		scannedCount++
+
 		if !avm.shouldVersionFile(relativePath) {
 			return nil
 		}
@@ -153,8 +161,15 @@ func (avm *AssetVersionManager) ScanDirectory(rootPath string) error {
 		}
 
 		avm.RegisterAsset(relativePath, content)
+		registeredCount++
 		return nil
 	})
+
+	if err == nil {
+		fmt.Printf("📦 [Versioning] Scanned %d files, registered %d for versioning\n", scannedCount, registeredCount)
+	}
+
+	return err
 }
 
 func (avm *AssetVersionManager) shouldVersionFile(path string) bool {
@@ -193,10 +208,19 @@ func (hp *HTMLProcessor) ProcessHTML(content []byte, basePath string) []byte {
 	}
 
 	result := string(content)
+	replacements := 0
 
 	result = hp.linkPattern.ReplaceAllStringFunc(result, func(match string) string {
-		return hp.processAssetReference(match)
+		processed := hp.processAssetReference(match)
+		if processed != match {
+			replacements++
+		}
+		return processed
 	})
+
+	if replacements > 0 {
+		fmt.Printf("🔄 [HTML Processing] Transformed %d asset references in %s\n", replacements, basePath)
+	}
 
 	return []byte(result)
 }
@@ -211,7 +235,13 @@ func (hp *HTMLProcessor) processAssetReference(match string) string {
 	originalURL := submatches[2]
 
 	if versionedPath, exists := hp.versionManager.GetVersionedPath(originalURL); exists {
+		fmt.Printf("    ➜ Replacing %s with %s\n", originalURL, versionedPath)
 		return strings.Replace(match, fmt.Sprintf(`%s="%s"`, attributeName, originalURL), fmt.Sprintf(`%s="%s"`, attributeName, versionedPath), 1)
+	} else {
+		// Debug: show what we're looking for but not finding
+		if strings.Contains(originalURL, ".css") || strings.Contains(originalURL, ".js") {
+			fmt.Printf("    ⚠️ No versioned path for: %s\n", originalURL)
+		}
 	}
 
 	return match
