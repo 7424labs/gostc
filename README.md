@@ -166,6 +166,139 @@ The server automatically sets the following security headers:
 - Referrer-Policy: strict-origin-when-cross-origin
 - Strict-Transport-Security (when using HTTPS)
 
+## Asset Versioning
+
+gostc supports automatic asset versioning for cache busting. When enabled, it:
+1. Scans static files and generates content-based hashes
+2. Transforms HTML files to use versioned URLs
+3. Serves both versioned and non-versioned URLs
+
+### Basic Versioning Setup
+
+```go
+server, err := gostc.New(
+    gostc.WithRoot("./static"),
+    gostc.WithVersioning(true),                    // Enable versioning
+    gostc.WithVersionHashLength(16),               // Hash length in hex chars
+    gostc.WithStaticPrefixes("/css/", "/js/"),     // Paths to version
+)
+```
+
+### Versioning with URL Prefix
+
+When serving files from a URL prefix (e.g., `/static/`) that differs from the filesystem structure:
+
+```go
+server, err := gostc.New(
+    gostc.WithRoot("./static"),                    // Filesystem root
+    gostc.WithVersioning(true),
+    gostc.WithURLPrefix("/static"),                // URL prefix for serving
+    gostc.WithStaticPrefixes("/css/", "/js/", "/images/", "/favicon/"),
+)
+```
+
+This handles cases where:
+- Files are stored at `./static/css/style.css`
+- URLs in HTML are `/static/css/style.css`
+- Versioned URL becomes `/static/css/style.abc123def456.css`
+
+## Embedding as HTTP Handler
+
+gostc can be embedded in existing HTTP applications as a handler.
+
+### Basic Handler Usage
+
+```go
+package main
+
+import (
+    "net/http"
+    "github.com/7424labs/gostc"
+)
+
+func main() {
+    // Create gostc server
+    staticServer, err := gostc.New(
+        gostc.WithRoot("./static"),
+        gostc.WithVersioning(true),
+        gostc.WithCache(100 << 20), // 100MB
+    )
+    if err != nil {
+        panic(err)
+    }
+
+    // Use as http.Handler
+    mux := http.NewServeMux()
+
+    // Serve static files from /static/
+    mux.Handle("/static/", http.StripPrefix("/static", staticServer))
+
+    // Your other routes
+    mux.HandleFunc("/api/", apiHandler)
+
+    http.ListenAndServe(":8080", mux)
+}
+```
+
+### Advanced Integration with URL Remapping
+
+```go
+package main
+
+import (
+    "net/http"
+    "strings"
+    "github.com/7424labs/gostc"
+)
+
+func main() {
+    // Initialize gostc with URL prefix for versioning
+    staticServer, err := gostc.New(
+        gostc.WithRoot("./static"),
+        gostc.WithVersioning(true),
+        gostc.WithURLPrefix("/static"),  // Tell gostc about URL prefix
+        gostc.WithStaticPrefixes("/css/", "/js/", "/images/"),
+    )
+    if err != nil {
+        panic(err)
+    }
+
+    mux := http.NewServeMux()
+
+    // Serve index.html with versioned assets
+    mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+        if r.URL.Path != "/" {
+            http.NotFound(w, r)
+            return
+        }
+        // Serve index.html - gostc will transform it with versioned URLs
+        r.URL.Path = "/index.html"
+        staticServer.ServeHTTP(w, r)
+    })
+
+    // Serve static files with URL prefix stripping
+    mux.HandleFunc("/static/", func(w http.ResponseWriter, r *http.Request) {
+        // Strip /static prefix before passing to gostc
+        originalPath := r.URL.Path
+        r.URL.Path = strings.TrimPrefix(r.URL.Path, "/static")
+        staticServer.ServeHTTP(w, r)
+        r.URL.Path = originalPath  // Restore for logging
+    })
+
+    // API routes
+    mux.HandleFunc("/api/", apiHandler)
+
+    http.ListenAndServe(":8080", mux)
+}
+```
+
+### Using ServeFileHTTP for Direct File Serving
+
+```go
+// ServeFileHTTP bypasses internal mux, useful for embedding
+staticServer.ServeFileHTTP(w, r)
+```
+
 ## API Reference
 
 ### Server Methods
@@ -174,11 +307,17 @@ The server automatically sets the following security headers:
 // Create a new server
 server, err := gostc.New(options...)
 
-// Start the server
+// Start the server (standalone mode)
 err := server.Start()
 
 // Stop the server gracefully
 err := server.Stop()
+
+// Use as http.Handler (embedded mode)
+server.ServeHTTP(w, r)
+
+// Direct file serving (bypasses internal mux)
+server.ServeFileHTTP(w, r)
 
 // Manually invalidate cache for a path
 server.InvalidatePath("/path/to/file")
@@ -188,6 +327,42 @@ server.InvalidateAll()
 
 // Get cache statistics
 stats := server.CacheStats()
+```
+
+### Configuration Options
+
+```go
+// File serving
+gostc.WithRoot(dir)                    // Root directory for static files
+gostc.WithIndexFile(name)              // Index file name (default: "index.html")
+
+// Compression
+gostc.WithCompression(types)           // Gzip | Brotli
+gostc.WithCompressionLevel(level)      // 1-9 for gzip, 0-11 for brotli
+
+// Caching
+gostc.WithCache(sizeBytes)             // Cache size in bytes
+gostc.WithCacheTTL(duration)           // Time-to-live for cached items
+gostc.WithCacheStrategy(strategy)      // LRU or LFU
+
+// Versioning
+gostc.WithVersioning(enable)           // Enable asset versioning
+gostc.WithVersionHashLength(length)    // Hash length (default: 16)
+gostc.WithStaticPrefixes(prefixes...)  // Paths to version
+gostc.WithURLPrefix(prefix)            // URL serving prefix
+
+// Performance
+gostc.WithHTTP2(enable)                // Enable HTTP/2
+gostc.WithRateLimit(reqPerSec)         // Rate limit per IP
+gostc.WithTimeouts(config)             // Read/Write/Idle timeouts
+
+// Security
+gostc.WithTLS(certFile, keyFile)       // Enable HTTPS
+gostc.WithCORS(origins, methods)       // Configure CORS
+
+// Monitoring
+gostc.WithMetrics(enable)              // Enable Prometheus metrics
+gostc.WithWatcher(enable)              // Watch files for changes
 ```
 
 ## Testing

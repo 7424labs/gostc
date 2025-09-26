@@ -89,15 +89,19 @@ func (avm *AssetVersionManager) RegisterAsset(originalPath string, content []byt
 		avm.contentHashes[originalPath] = hash
 		avm.contentHashes[prefixedOriginal] = hash
 
-		// Debug output
-		fmt.Printf("  ✓ Registered: %s → %s (also as %s → %s)\n", originalPath, versionedPath, prefixedOriginal, prefixedVersioned)
+		// Debug output when GOSTC_DEBUG is set
+		if os.Getenv("GOSTC_DEBUG") != "" {
+			fmt.Printf("  ✓ Registered: %s → %s (also as %s → %s)\n", originalPath, versionedPath, prefixedOriginal, prefixedVersioned)
+		}
 	} else {
 		avm.versionedPaths[originalPath] = versionedPath
 		avm.originalPaths[versionedPath] = originalPath
 		avm.contentHashes[originalPath] = hash
 
-		// Debug output
-		fmt.Printf("  ✓ Registered: %s → %s\n", originalPath, versionedPath)
+		// Debug output when GOSTC_DEBUG is set
+		if os.Getenv("GOSTC_DEBUG") != "" {
+			fmt.Printf("  ✓ Registered: %s → %s\n", originalPath, versionedPath)
+		}
 	}
 }
 
@@ -172,7 +176,7 @@ func (avm *AssetVersionManager) ScanDirectory(rootPath string) error {
 
 		if !avm.shouldVersionFile(relativePath) {
 			// Debug: show why file is not being versioned
-			if strings.Contains(relativePath, ".css") || strings.Contains(relativePath, ".js") {
+			if os.Getenv("GOSTC_DEBUG") != "" && (strings.Contains(relativePath, ".css") || strings.Contains(relativePath, ".js")) {
 				fmt.Printf("  ⚠️ Skipping %s (not matching prefixes: %v)\n", relativePath, avm.config.StaticPrefixes)
 			}
 			return nil
@@ -188,7 +192,8 @@ func (avm *AssetVersionManager) ScanDirectory(rootPath string) error {
 		return nil
 	})
 
-	if err == nil {
+	// Debug logging can be enabled with environment variable
+	if err == nil && os.Getenv("GOSTC_DEBUG") != "" {
 		fmt.Printf("📦 [Versioning] Scanned %d files, registered %d for versioning\n", scannedCount, registeredCount)
 	}
 
@@ -241,7 +246,7 @@ func (hp *HTMLProcessor) ProcessHTML(content []byte, basePath string) []byte {
 		return processed
 	})
 
-	if replacements > 0 {
+	if replacements > 0 && os.Getenv("GOSTC_DEBUG") != "" {
 		fmt.Printf("🔄 [HTML Processing] Transformed %d asset references in %s\n", replacements, basePath)
 	}
 
@@ -258,11 +263,13 @@ func (hp *HTMLProcessor) processAssetReference(match string) string {
 	originalURL := submatches[2]
 
 	if versionedPath, exists := hp.versionManager.GetVersionedPath(originalURL); exists {
-		fmt.Printf("    ➜ Replacing %s with %s\n", originalURL, versionedPath)
+		if os.Getenv("GOSTC_DEBUG") != "" {
+			fmt.Printf("    ➜ Replacing %s with %s\n", originalURL, versionedPath)
+		}
 		return strings.Replace(match, fmt.Sprintf(`%s="%s"`, attributeName, originalURL), fmt.Sprintf(`%s="%s"`, attributeName, versionedPath), 1)
 	} else {
 		// Debug: show what we're looking for but not finding
-		if strings.Contains(originalURL, ".css") || strings.Contains(originalURL, ".js") {
+		if os.Getenv("GOSTC_DEBUG") != "" && (strings.Contains(originalURL, ".css") || strings.Contains(originalURL, ".js")) {
 			fmt.Printf("    ⚠️ No versioned path for: %s\n", originalURL)
 		}
 	}
