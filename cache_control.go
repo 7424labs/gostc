@@ -10,9 +10,9 @@ import (
 type FileType int
 
 const (
-	StaticAsset FileType = iota  // Images, fonts, etc - long cache
-	DynamicAsset                  // HTML, JSON - shorter cache
-	ImmutableAsset                // Versioned assets - very long cache
+	StaticAsset    FileType = iota // Images, fonts, etc - long cache
+	DynamicAsset                   // HTML, JSON - shorter cache
+	ImmutableAsset                 // Versioned assets - very long cache
 )
 
 // getCacheControl returns the appropriate Cache-Control header value based on file type
@@ -55,26 +55,26 @@ func getFileType(path string) FileType {
 
 	// Static assets that change infrequently
 	staticExts := map[string]bool{
-		".jpg":  true,
-		".jpeg": true,
-		".png":  true,
-		".gif":  true,
-		".svg":  true,
-		".webp": true,
-		".ico":  true,
-		".woff": true,
+		".jpg":   true,
+		".jpeg":  true,
+		".png":   true,
+		".gif":   true,
+		".svg":   true,
+		".webp":  true,
+		".ico":   true,
+		".woff":  true,
 		".woff2": true,
-		".ttf":  true,
-		".otf":  true,
-		".eot":  true,
-		".mp4":  true,
-		".webm": true,
-		".mp3":  true,
-		".wav":  true,
-		".pdf":  true,
-		".zip":  true,
-		".tar":  true,
-		".gz":   true,
+		".ttf":   true,
+		".otf":   true,
+		".eot":   true,
+		".mp4":   true,
+		".webm":  true,
+		".mp3":   true,
+		".wav":   true,
+		".pdf":   true,
+		".zip":   true,
+		".tar":   true,
+		".gz":    true,
 	}
 
 	// CSS and JS without version/hash are still static but may change
@@ -131,8 +131,8 @@ func shouldRevalidate(path string) bool {
 	revalidateExts := map[string]bool{
 		".html": true,
 		".htm":  true,
-		".json": true,  // API responses
-		".xml":  true,  // Sitemaps, RSS feeds
+		".json": true, // API responses
+		".xml":  true, // Sitemaps, RSS feeds
 	}
 
 	return revalidateExts[ext]

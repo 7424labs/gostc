@@ -210,11 +210,11 @@ func TestAssetVersionManagerScanDirectory(t *testing.T) {
 	os.MkdirAll(staticDir, 0755)
 
 	testFiles := map[string]string{
-		"static/app.js":      "console.log('app');",
-		"static/style.css":   "body { color: red; }",
-		"static/image.png":   "fake png data",
-		"static/readme.txt":  "readme content", // Should not be versioned
-		"index.html":         "<html></html>",  // Not in static prefix
+		"static/app.js":     "console.log('app');",
+		"static/style.css":  "body { color: red; }",
+		"static/image.png":  "fake png data",
+		"static/readme.txt": "readme content", // Should not be versioned
+		"index.html":        "<html></html>",  // Not in static prefix
 	}
 
 	for relativePath, content := range testFiles {
@@ -285,10 +285,10 @@ func TestConsistentHashing(t *testing.T) {
 
 func TestVersioningWithCustomPattern(t *testing.T) {
 	config := &Config{
-		EnableVersioning:    true,
-		VersioningPattern:   "{base}_v{hash}{ext}",
-		VersionHashLength:   8, // This means 8 hex characters
-		StaticPrefixes:      []string{"/assets/"},
+		EnableVersioning:  true,
+		VersioningPattern: "{base}_v{hash}{ext}",
+		VersionHashLength: 8, // This means 8 hex characters
+		StaticPrefixes:    []string{"/assets/"},
 	}
 
 	avm := NewAssetVersionManager(config)

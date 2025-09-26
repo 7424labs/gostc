@@ -143,7 +143,7 @@ func DefaultConfig() *Config {
 
 		EnableVersioning:  false, // Disabled by default
 		VersioningPattern: "",    // Empty means use default: base.hash.ext
-		VersionHashLength: 6,
+		VersionHashLength: 8,
 		StaticPrefixes:    []string{"/static/", "/assets/", "/dist/", "/build/"},
 	}
 }

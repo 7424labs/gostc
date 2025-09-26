@@ -13,17 +13,17 @@ import (
 
 // Common error variables for consistent error checking
 var (
-	ErrPathTraversal    = errors.New("path traversal attempt detected")
-	ErrInvalidPath      = errors.New("invalid path")
-	ErrFileTooLarge     = errors.New("file size exceeds maximum limit")
-	ErrRequestTooLarge  = errors.New("request body too large")
-	ErrCacheCorrupted   = errors.New("cache entry corrupted")
+	ErrPathTraversal     = errors.New("path traversal attempt detected")
+	ErrInvalidPath       = errors.New("invalid path")
+	ErrFileTooLarge      = errors.New("file size exceeds maximum limit")
+	ErrRequestTooLarge   = errors.New("request body too large")
+	ErrCacheCorrupted    = errors.New("cache entry corrupted")
 	ErrCompressionFailed = errors.New("compression failed")
-	ErrInvalidConfig    = errors.New("invalid configuration")
-	ErrServerShutdown   = errors.New("server is shutting down")
+	ErrInvalidConfig     = errors.New("invalid configuration")
+	ErrServerShutdown    = errors.New("server is shutting down")
 	ErrRateLimitExceeded = errors.New("rate limit exceeded")
-	ErrInvalidCSRFToken = errors.New("invalid CSRF token")
-	ErrTimeout          = errors.New("operation timed out")
+	ErrInvalidCSRFToken  = errors.New("invalid CSRF token")
+	ErrTimeout           = errors.New("operation timed out")
 )
 
 // ErrorType represents the category of error
@@ -180,9 +180,9 @@ func getStackTrace() string {
 
 // ErrorHandler handles errors consistently across the application
 type ErrorHandler struct {
-	logger         *ErrorLogger
-	debug          bool
-	includeStack   bool
+	logger       *ErrorLogger
+	debug        bool
+	includeStack bool
 }
 
 // NewErrorHandler creates a new error handler
@@ -247,8 +247,9 @@ func (eh *ErrorHandler) sendErrorResponse(w http.ResponseWriter, r *http.Request
 
 // ErrorLogger handles structured error logging
 type ErrorLogger struct {
-	mu     sync.Mutex
-	errors []LoggedError
+	mu       sync.Mutex
+	errors   []LoggedError
+	maxLogs  int
 }
 
 // LoggedError represents an error with metadata
@@ -264,7 +265,8 @@ type LoggedError struct {
 // NewErrorLogger creates a new error logger
 func NewErrorLogger() *ErrorLogger {
 	return &ErrorLogger{
-		errors: make([]LoggedError, 0),
+		errors:  make([]LoggedError, 0, 1000),
+		maxLogs: 1000, // Keep last 1000 error logs
 	}
 }
 
@@ -284,10 +286,16 @@ func (el *ErrorLogger) LogError(err *ServerError, r *http.Request) {
 
 	el.errors = append(el.errors, loggedErr)
 
+	// Prevent unbounded growth
+	if len(el.errors) > el.maxLogs {
+		// Keep the last el.maxLogs entries
+		el.errors = el.errors[len(el.errors)-el.maxLogs:]
+	}
+
 	// Log to stdout/stderr
 	if err.Type == ErrorTypeServerError || err.Type == ErrorTypeConfiguration {
 		// Critical errors to stderr
-		fmt.Fprintf(stderr, "[ERROR] %s %s %s: %v (Request ID: %s)\n",
+		fmt.Fprintf(os.Stderr, "[ERROR] %s %s %s: %v (Request ID: %s)\n",
 			loggedErr.Timestamp.Format(time.RFC3339),
 			loggedErr.Method,
 			loggedErr.Path,
@@ -407,13 +415,12 @@ func isRetryableError(err error) bool {
 	return false
 }
 
-var stderr = os.Stderr
 
 // Error recovery functions
 func SafeClose(closer io.Closer) {
 	if closer != nil {
 		if err := closer.Close(); err != nil {
-			fmt.Fprintf(stderr, "Error closing resource: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error closing resource: %v\n", err)
 		}
 	}
 }

@@ -284,7 +284,7 @@ func TestDirectoryListing(t *testing.T) {
 
 	body := w.Body.String()
 	if !bytes.Contains([]byte(body), []byte("file1.txt")) ||
-	   !bytes.Contains([]byte(body), []byte("file2.txt")) {
+		!bytes.Contains([]byte(body), []byte("file2.txt")) {
 		t.Error("Expected directory listing")
 	}
 }

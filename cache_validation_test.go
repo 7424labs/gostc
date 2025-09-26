@@ -109,15 +109,15 @@ func TestCacheControlHeaders(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	testCases := []struct {
-		filename         string
-		content          []byte
+		filename             string
+		content              []byte
 		expectedCacheControl string
 	}{
-		{"style.css", []byte("body { margin: 0; }"), "public, max-age=86400"},  // Static asset
-		{"app.js", []byte("console.log('test');"), "public, max-age=86400"},    // Static asset
-		{"index.html", []byte("<html></html>"), "public, max-age=3600, must-revalidate"},  // Dynamic
-		{"data.json", []byte(`{"key": "value"}`), "public, max-age=3600, must-revalidate"}, // Dynamic
-		{"image.svg", []byte("<svg></svg>"), "public, max-age=86400"},  // Static asset
+		{"style.css", []byte("body { margin: 0; }"), "public, max-age=86400"},                         // Static asset
+		{"app.js", []byte("console.log('test');"), "public, max-age=86400"},                           // Static asset
+		{"index.html", []byte("<html></html>"), "public, max-age=3600, must-revalidate"},              // Dynamic
+		{"data.json", []byte(`{"key": "value"}`), "public, max-age=3600, must-revalidate"},            // Dynamic
+		{"image.svg", []byte("<svg></svg>"), "public, max-age=86400"},                                 // Static asset
 		{"app.abc123.js", []byte("console.log('versioned');"), "public, max-age=31536000, immutable"}, // Versioned
 	}
 

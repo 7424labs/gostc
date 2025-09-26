@@ -11,10 +11,11 @@ import (
 
 // CSRFProtection provides CSRF token validation for state-changing operations
 type CSRFProtection struct {
-	tokens    map[string]tokenInfo
-	mu        sync.RWMutex
-	tokenTTL  time.Duration
-	cookieName string
+	tokens      map[string]tokenInfo
+	mu          sync.RWMutex
+	tokenTTL    time.Duration
+	cookieName  string
+	stopCleanup chan struct{}
 }
 
 type tokenInfo struct {
@@ -25,9 +26,10 @@ type tokenInfo struct {
 // NewCSRFProtection creates a new CSRF protection middleware
 func NewCSRFProtection(tokenTTL time.Duration) *CSRFProtection {
 	cp := &CSRFProtection{
-		tokens:     make(map[string]tokenInfo),
-		tokenTTL:   tokenTTL,
-		cookieName: "_csrf_token",
+		tokens:      make(map[string]tokenInfo),
+		tokenTTL:    tokenTTL,
+		cookieName:  "_csrf_token",
+		stopCleanup: make(chan struct{}),
 	}
 
 	// Start cleanup goroutine
@@ -116,16 +118,26 @@ func (cp *CSRFProtection) cleanup() {
 	ticker := time.NewTicker(cp.tokenTTL / 2)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		cp.mu.Lock()
-		now := time.Now()
-		for token, info := range cp.tokens {
-			if now.Sub(info.createdAt) > cp.tokenTTL {
-				delete(cp.tokens, token)
+	for {
+		select {
+		case <-ticker.C:
+			cp.mu.Lock()
+			now := time.Now()
+			for token, info := range cp.tokens {
+				if now.Sub(info.createdAt) > cp.tokenTTL {
+					delete(cp.tokens, token)
+				}
 			}
+			cp.mu.Unlock()
+		case <-cp.stopCleanup:
+			return
 		}
-		cp.mu.Unlock()
 	}
+}
+
+// Stop gracefully shuts down the CSRF protection
+func (cp *CSRFProtection) Stop() {
+	close(cp.stopCleanup)
 }
 
 // SecureCompare performs a constant-time comparison of two strings
@@ -138,11 +150,12 @@ func SecureCompare(a, b string) bool {
 
 // IPRateLimiter provides more sophisticated rate limiting with burst support
 type IPRateLimiter struct {
-	limiters map[string]*TokenBucket
-	mu       sync.RWMutex
-	rate     int           // Tokens per second
-	burst    int           // Maximum burst size
-	ttl      time.Duration // TTL for inactive IPs
+	limiters    map[string]*TokenBucket
+	mu          sync.RWMutex
+	rate        int           // Tokens per second
+	burst       int           // Maximum burst size
+	ttl         time.Duration // TTL for inactive IPs
+	stopCleanup chan struct{}
 }
 
 type TokenBucket struct {
@@ -154,10 +167,11 @@ type TokenBucket struct {
 // NewIPRateLimiter creates a new IP-based rate limiter
 func NewIPRateLimiter(rate, burst int, ttl time.Duration) *IPRateLimiter {
 	rl := &IPRateLimiter{
-		limiters: make(map[string]*TokenBucket),
-		rate:     rate,
-		burst:    burst,
-		ttl:      ttl,
+		limiters:    make(map[string]*TokenBucket),
+		rate:        rate,
+		burst:       burst,
+		ttl:         ttl,
+		stopCleanup: make(chan struct{}),
 	}
 
 	// Start cleanup goroutine
@@ -206,18 +220,28 @@ func (rl *IPRateLimiter) cleanup() {
 	ticker := time.NewTicker(rl.ttl / 2)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		rl.mu.Lock()
-		now := time.Now()
-		for ip, limiter := range rl.limiters {
-			limiter.mu.Lock()
-			if now.Sub(limiter.lastCheck) > rl.ttl {
-				delete(rl.limiters, ip)
+	for {
+		select {
+		case <-ticker.C:
+			rl.mu.Lock()
+			now := time.Now()
+			for ip, limiter := range rl.limiters {
+				limiter.mu.Lock()
+				if now.Sub(limiter.lastCheck) > rl.ttl {
+					delete(rl.limiters, ip)
+				}
+				limiter.mu.Unlock()
 			}
-			limiter.mu.Unlock()
+			rl.mu.Unlock()
+		case <-rl.stopCleanup:
+			return
 		}
-		rl.mu.Unlock()
 	}
+}
+
+// Stop gracefully shuts down the rate limiter
+func (rl *IPRateLimiter) Stop() {
+	close(rl.stopCleanup)
 }
 
 // InputSanitizer provides methods to sanitize various input types

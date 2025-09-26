@@ -276,4 +276,3 @@ func (hp *HTMLProcessor) processAssetReference(match string) string {
 
 	return match
 }
-

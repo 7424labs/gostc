@@ -232,9 +232,9 @@ func TestPerformanceMetrics(t *testing.T) {
 
 	// Create various test files
 	files := map[string]int{
-		"small.txt":  1024,         // 1KB
-		"medium.txt": 100 * 1024,   // 100KB
-		"large.txt":  1024 * 1024,  // 1MB
+		"small.txt":  1024,        // 1KB
+		"medium.txt": 100 * 1024,  // 100KB
+		"large.txt":  1024 * 1024, // 1MB
 	}
 
 	for name, size := range files {

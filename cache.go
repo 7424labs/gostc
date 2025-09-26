@@ -33,36 +33,53 @@ type Cache interface {
 }
 
 type CacheStats struct {
-	Hits       int64
-	Misses     int64
-	Evictions  int64
-	Size       int64
-	ItemCount  int
+	Hits      int64
+	Misses    int64
+	Evictions int64
+	Size      int64
+	ItemCount int
 }
 
 type LRUCache struct {
-	cache    *lru.Cache[CacheKey, *CacheEntry]
-	mu       sync.RWMutex
-	stats    CacheStats
-	maxSize  int64
+	cache       *lru.Cache[CacheKey, *CacheEntry]
+	mu          sync.RWMutex
+	stats       CacheStats
+	maxSize     int64
 	currentSize int64
-	ttl      time.Duration
+	ttl         time.Duration
+	stopCleanup chan struct{}
 }
 
 func NewLRUCache(maxSize int64, ttl time.Duration) (*LRUCache, error) {
-	onEvicted := func(key CacheKey, value *CacheEntry) {
+	// Calculate appropriate cache entries based on maxSize
+	// Assume average entry size of 50KB, with minimum 100 entries and maximum 10000
+	estimatedEntries := int(maxSize / (50 * 1024))
+	if estimatedEntries < 100 {
+		estimatedEntries = 100
+	}
+	if estimatedEntries > 10000 {
+		estimatedEntries = 10000
 	}
 
-	cache, err := lru.NewWithEvict[CacheKey, *CacheEntry](1000, onEvicted)
+	lc := &LRUCache{
+		maxSize:     maxSize,
+		ttl:         ttl,
+		stopCleanup: make(chan struct{}),
+	}
+
+	onEvicted := func(key CacheKey, value *CacheEntry) {
+		if value != nil {
+			lc.currentSize -= value.Size
+			lc.stats.Evictions++
+		}
+	}
+
+	cache, err := lru.NewWithEvict[CacheKey, *CacheEntry](estimatedEntries, onEvicted)
 	if err != nil {
 		return nil, err
 	}
 
-	lc := &LRUCache{
-		cache:   cache,
-		maxSize: maxSize,
-		ttl:     ttl,
-	}
+	lc.cache = cache
 
 	go lc.cleanupExpired()
 
@@ -110,7 +127,7 @@ func (c *LRUCache) Set(key CacheKey, entry *CacheEntry) {
 		return
 	}
 
-	if c.currentSize + entry.Size > c.maxSize {
+	if c.currentSize+entry.Size > c.maxSize {
 		c.evictToSize(c.maxSize - entry.Size)
 	}
 
@@ -162,31 +179,42 @@ func (c *LRUCache) cleanupExpired() {
 	ticker := time.NewTicker(c.ttl / 2)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		c.mu.Lock()
-		keys := c.cache.Keys()
-		now := time.Now()
+	for {
+		select {
+		case <-ticker.C:
+			c.mu.Lock()
+			keys := c.cache.Keys()
+			now := time.Now()
 
-		for _, key := range keys {
-			if entry, ok := c.cache.Peek(key); ok {
-				if now.Sub(entry.CreatedAt) > c.ttl {
-					c.cache.Remove(key)
-					c.currentSize -= entry.Size
+			for _, key := range keys {
+				if entry, ok := c.cache.Peek(key); ok {
+					if now.Sub(entry.CreatedAt) > c.ttl {
+						c.cache.Remove(key)
+						c.currentSize -= entry.Size
+					}
 				}
 			}
+			c.mu.Unlock()
+		case <-c.stopCleanup:
+			return
 		}
-		c.mu.Unlock()
 	}
 }
 
+// Stop gracefully shuts down the cache and its cleanup goroutine
+func (c *LRUCache) Stop() {
+	close(c.stopCleanup)
+}
+
 type LFUCache struct {
-	items     map[CacheKey]*lfuEntry
-	freqList  *minHeap
-	mu        sync.RWMutex
-	maxSize   int64
+	items       map[CacheKey]*lfuEntry
+	freqList    *minHeap
+	mu          sync.RWMutex
+	maxSize     int64
 	currentSize int64
-	ttl       time.Duration
-	stats     CacheStats
+	ttl         time.Duration
+	stats       CacheStats
+	stopCleanup chan struct{}
 }
 
 type lfuEntry struct {
@@ -198,9 +226,9 @@ type lfuEntry struct {
 
 type minHeap []*lfuEntry
 
-func (h minHeap) Len() int            { return len(h) }
-func (h minHeap) Less(i, j int) bool  { return h[i].freq < h[j].freq }
-func (h minHeap) Swap(i, j int)       {
+func (h minHeap) Len() int           { return len(h) }
+func (h minHeap) Less(i, j int) bool { return h[i].freq < h[j].freq }
+func (h minHeap) Swap(i, j int) {
 	h[i], h[j] = h[j], h[i]
 	h[i].index = i
 	h[j].index = j
@@ -219,7 +247,7 @@ func (h *minHeap) Pop() interface{} {
 	item := old[n-1]
 	old[n-1] = nil
 	item.index = -1
-	*h = old[0:n-1]
+	*h = old[0 : n-1]
 	return item
 }
 
@@ -228,10 +256,11 @@ func NewLFUCache(maxSize int64, ttl time.Duration) *LFUCache {
 	heap.Init(h)
 
 	cache := &LFUCache{
-		items:    make(map[CacheKey]*lfuEntry),
-		freqList: h,
-		maxSize:  maxSize,
-		ttl:      ttl,
+		items:       make(map[CacheKey]*lfuEntry),
+		freqList:    h,
+		maxSize:     maxSize,
+		ttl:         ttl,
+		stopCleanup: make(chan struct{}),
 	}
 
 	go cache.cleanupExpired()
@@ -357,18 +386,28 @@ func (c *LFUCache) cleanupExpired() {
 	ticker := time.NewTicker(c.ttl / 2)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		c.mu.Lock()
-		now := time.Now()
+	for {
+		select {
+		case <-ticker.C:
+			c.mu.Lock()
+			now := time.Now()
 
-		for key, item := range c.items {
-			if now.Sub(item.entry.CreatedAt) > c.ttl {
-				c.removeItem(item)
-				delete(c.items, key)
+			for key, item := range c.items {
+				if now.Sub(item.entry.CreatedAt) > c.ttl {
+					c.removeItem(item)
+					delete(c.items, key)
+				}
 			}
+			c.mu.Unlock()
+		case <-c.stopCleanup:
+			return
 		}
-		c.mu.Unlock()
 	}
+}
+
+// Stop gracefully shuts down the cache and its cleanup goroutine
+func (c *LFUCache) Stop() {
+	close(c.stopCleanup)
 }
 
 func NewCache(config *Config) (Cache, error) {

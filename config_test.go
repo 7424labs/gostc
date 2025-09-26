@@ -16,8 +16,8 @@ func TestConfigurationOptions(t *testing.T) {
 		if config.EnableVersioning != false {
 			t.Error("Versioning should be disabled by default")
 		}
-		if config.VersionHashLength != 16 {
-			t.Errorf("Expected default hash length 16, got %d", config.VersionHashLength)
+		if config.VersionHashLength != 8 {
+			t.Errorf("Expected default hash length 8, got %d", config.VersionHashLength)
 		}
 		if len(config.StaticPrefixes) == 0 {
 			t.Error("Should have default static prefixes")
@@ -286,7 +286,7 @@ func TestCompressionConfiguration(t *testing.T) {
 			t.Fatalf("Failed to create server: %v", err)
 		}
 
-		if server.config.Compression != (Gzip|Brotli) {
+		if server.config.Compression != (Gzip | Brotli) {
 			t.Error("Should enable both compressions")
 		}
 	})

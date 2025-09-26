@@ -24,10 +24,10 @@ func TestServerVersioningIntegration(t *testing.T) {
 	os.MkdirAll(staticDir, 0755)
 
 	testFiles := map[string]string{
-		"static/app.js":     "console.log('Hello World');",
-		"static/style.css":  "body { background: #fff; }",
-		"static/logo.png":   "fake png data",
-		"index.html":        `<!DOCTYPE html><html><head><link href="/static/style.css" rel="stylesheet"><script src="/static/app.js"></script></head><body><img src="/static/logo.png" alt="Logo"></body></html>`,
+		"static/app.js":    "console.log('Hello World');",
+		"static/style.css": "body { background: #fff; }",
+		"static/logo.png":  "fake png data",
+		"index.html":       `<!DOCTYPE html><html><head><link href="/static/style.css" rel="stylesheet"><script src="/static/app.js"></script></head><body><img src="/static/logo.png" alt="Logo"></body></html>`,
 	}
 
 	for relativePath, content := range testFiles {
@@ -165,12 +165,18 @@ func TestServerVersioningIntegration(t *testing.T) {
 		versionedURL := ts.URL + versionedPath
 
 		// Request original
-		resp1, _ := http.Get(originalURL)
+		resp1, err := http.Get(originalURL)
+		if err != nil {
+			t.Fatalf("Failed to get original URL: %v", err)
+		}
 		defer resp1.Body.Close()
 		body1, _ := io.ReadAll(resp1.Body)
 
 		// Request versioned
-		resp2, _ := http.Get(versionedURL)
+		resp2, err := http.Get(versionedURL)
+		if err != nil {
+			t.Fatalf("Failed to get versioned URL: %v", err)
+		}
 		defer resp2.Body.Close()
 		body2, _ := io.ReadAll(resp2.Body)
 

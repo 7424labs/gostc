@@ -17,15 +17,21 @@ type Compressor interface {
 }
 
 type GzipCompressor struct {
-	pool sync.Pool
+	writerPool sync.Pool
+	bufferPool sync.Pool
 }
 
 func NewGzipCompressor() *GzipCompressor {
 	return &GzipCompressor{
-		pool: sync.Pool{
+		writerPool: sync.Pool{
 			New: func() interface{} {
 				w, _ := gzip.NewWriterLevel(nil, gzip.DefaultCompression)
 				return w
+			},
+		},
+		bufferPool: sync.Pool{
+			New: func() interface{} {
+				return new(bytes.Buffer)
 			},
 		},
 	}
@@ -36,12 +42,16 @@ func (g *GzipCompressor) Compress(data []byte, level int) ([]byte, error) {
 		level = gzip.DefaultCompression
 	}
 
-	var buf bytes.Buffer
+	buf := g.bufferPool.Get().(*bytes.Buffer)
+	defer func() {
+		buf.Reset()
+		g.bufferPool.Put(buf)
+	}()
 
-	gw := g.pool.Get().(*gzip.Writer)
-	defer g.pool.Put(gw)
+	gw := g.writerPool.Get().(*gzip.Writer)
+	defer g.writerPool.Put(gw)
 
-	gw.Reset(&buf)
+	gw.Reset(buf)
 
 	if _, err := gw.Write(data); err != nil {
 		return nil, err
@@ -51,7 +61,11 @@ func (g *GzipCompressor) Compress(data []byte, level int) ([]byte, error) {
 		return nil, err
 	}
 
-	return buf.Bytes(), nil
+	// Copy the bytes to avoid reuse issues
+	result := make([]byte, buf.Len())
+	copy(result, buf.Bytes())
+
+	return result, nil
 }
 
 func (g *GzipCompressor) ContentEncoding() string {
@@ -59,10 +73,23 @@ func (g *GzipCompressor) ContentEncoding() string {
 }
 
 type BrotliCompressor struct {
+	bufferPool sync.Pool
+	writerPool sync.Pool
 }
 
 func NewBrotliCompressor() *BrotliCompressor {
-	return &BrotliCompressor{}
+	return &BrotliCompressor{
+		bufferPool: sync.Pool{
+			New: func() interface{} {
+				return new(bytes.Buffer)
+			},
+		},
+		writerPool: sync.Pool{
+			New: func() interface{} {
+				return brotli.NewWriterLevel(nil, brotli.DefaultCompression)
+			},
+		},
+	}
 }
 
 func (b *BrotliCompressor) Compress(data []byte, level int) ([]byte, error) {
@@ -70,9 +97,16 @@ func (b *BrotliCompressor) Compress(data []byte, level int) ([]byte, error) {
 		level = brotli.DefaultCompression
 	}
 
-	var buf bytes.Buffer
+	buf := b.bufferPool.Get().(*bytes.Buffer)
+	defer func() {
+		buf.Reset()
+		b.bufferPool.Put(buf)
+	}()
 
-	bw := brotli.NewWriterLevel(&buf, level)
+	bw := b.writerPool.Get().(*brotli.Writer)
+	defer b.writerPool.Put(bw)
+
+	bw.Reset(buf)
 
 	if _, err := bw.Write(data); err != nil {
 		return nil, err
@@ -82,7 +116,11 @@ func (b *BrotliCompressor) Compress(data []byte, level int) ([]byte, error) {
 		return nil, err
 	}
 
-	return buf.Bytes(), nil
+	// Copy the bytes to avoid reuse issues
+	result := make([]byte, buf.Len())
+	copy(result, buf.Bytes())
+
+	return result, nil
 }
 
 func (b *BrotliCompressor) ContentEncoding() string {
@@ -90,10 +128,10 @@ func (b *BrotliCompressor) ContentEncoding() string {
 }
 
 type CompressionManager struct {
-	config      *Config
-	gzip        *GzipCompressor
-	brotli      *BrotliCompressor
-	mu          sync.RWMutex
+	config *Config
+	gzip   *GzipCompressor
+	brotli *BrotliCompressor
+	mu     sync.RWMutex
 }
 
 func NewCompressionManager(config *Config) *CompressionManager {

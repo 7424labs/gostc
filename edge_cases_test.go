@@ -324,9 +324,9 @@ func TestEdgeCases(t *testing.T) {
 
 		// Create assets
 		assets := map[string]string{
-			"static/main.js":     "console.log('main');",
-			"static/style.css":   "body { margin: 0; }",
-			"static/logo.svg":    "<svg></svg>",
+			"static/main.js":   "console.log('main');",
+			"static/style.css": "body { margin: 0; }",
+			"static/logo.svg":  "<svg></svg>",
 		}
 
 		for path, content := range assets {
@@ -525,9 +525,9 @@ func TestErrorRecovery(t *testing.T) {
 		// Test malformed versioned paths
 		invalidVersionedPaths := []string{
 			"/static/file.invalidhash.js",
-			"/static/file.12345.js", // Too short hash
+			"/static/file.12345.js",    // Too short hash
 			"/static/file.gggggggg.js", // Invalid hex characters
-			"/static/file..js", // Empty hash
+			"/static/file..js",         // Empty hash
 		}
 
 		for _, path := range invalidVersionedPaths {

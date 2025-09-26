@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"mime"
+	"net"
 	"net/http"
 	"os"
 	"path"
@@ -16,7 +17,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"net"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -34,17 +34,17 @@ type Server struct {
 	metrics        *Metrics
 	csrfProtection *CSRFProtection
 	rateLimiter    *IPRateLimiter
-	errorHandler  *ErrorHandler
+	errorHandler   *ErrorHandler
 	mu             sync.RWMutex
 	shutdown       chan struct{}
 }
 
 type Metrics struct {
-	requestsTotal    prometheus.Counter
-	requestDuration  prometheus.Histogram
-	cacheHits        prometheus.Counter
-	cacheMisses      prometheus.Counter
-	bytesServed      prometheus.Counter
+	requestsTotal     prometheus.Counter
+	requestDuration   prometheus.Histogram
+	cacheHits         prometheus.Counter
+	cacheMisses       prometheus.Counter
+	bytesServed       prometheus.Counter
 	activeConnections prometheus.Gauge
 }
 
@@ -71,7 +71,7 @@ func New(opts ...Option) (*Server, error) {
 		htmlProcessor:  htmlProcessor,
 		csrfProtection: NewCSRFProtection(time.Hour),
 		rateLimiter:    NewIPRateLimiter(config.RateLimitPerIP, config.RateLimitPerIP*10, 5*time.Minute),
-		errorHandler:  NewErrorHandler(config.Debug),
+		errorHandler:   NewErrorHandler(config.Debug),
 		shutdown:       make(chan struct{}),
 	}
 
@@ -558,8 +558,24 @@ func (s *Server) Stop() error {
 	ctx, cancel := context.WithTimeout(context.Background(), s.config.ShutdownTimeout)
 	defer cancel()
 
+	// Stop all cleanup goroutines
 	if s.invalidator != nil {
 		s.invalidator.Stop()
+	}
+
+	// Stop cache cleanup goroutines
+	if lruCache, ok := s.cache.(*LRUCache); ok {
+		lruCache.Stop()
+	} else if lfuCache, ok := s.cache.(*LFUCache); ok {
+		lfuCache.Stop()
+	}
+
+	// Stop security components
+	if s.csrfProtection != nil {
+		s.csrfProtection.Stop()
+	}
+	if s.rateLimiter != nil {
+		s.rateLimiter.Stop()
 	}
 
 	return s.httpServer.Shutdown(ctx)
