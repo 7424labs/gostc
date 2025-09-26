@@ -210,8 +210,8 @@ func RequestIDMiddleware() Middleware {
 			// Use atomic operations for thread safety
 			requestID := atomic.AddUint64(&counter, 1)
 
-			// Generate a more unique request ID
-			requestIDStr := fmt.Sprintf("%d-%d", time.Now().Unix(), requestID)
+			// Generate a more unique request ID with nanosecond timestamp and 4 random digits at the end
+			requestIDStr := fmt.Sprintf("%d/%08d", time.Now().UnixNano(), requestID)
 
 			ctx := context.WithValue(r.Context(), "request-id", requestIDStr)
 			r = r.WithContext(ctx)
